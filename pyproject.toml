@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "approx-topk"
+version = "0.1.0"
+description = ""
+authors = ["Oscar Key <oscar.t.key@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+torch = {version = "^2.4.0"}
+numpy = "^2.0.1"
+
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.11.1"
+pytest = "^8.3.2"
+isort = "^5.13.2"
+black = "^24.8.0"
+
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
