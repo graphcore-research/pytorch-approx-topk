@@ -7,6 +7,9 @@ from torch.utils import cpp_extension
 
 def topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
     assert xs.is_cuda
+    assert k <= xs.shape[dim]
+    if dim < 0:
+        dim = xs.ndim + dim
 
     impl = _get_impl()
 
