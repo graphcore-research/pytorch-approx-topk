@@ -8,7 +8,6 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = {version = "^2.4.0"}
-numpy = "^2.0.1"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -18,8 +17,13 @@ isort = "^5.13.2"
 black = "^24.8.0"
 
 
+
+[tool.poetry.group.benchmarks.dependencies]
+matplotlib = "^3.9.0"
+tqdm = "^4.66.5"
+
 [[tool.poetry.source]]
-name = "pytorch"
+name = "pytorch_cu124"
 url = "https://download.pytorch.org/whl/cu124"
 priority = "explicit"
 
