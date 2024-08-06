@@ -1,6 +1,7 @@
 import torch
 
-from approx_topk.exact_methods import ExactTopK, radix_select
+from approx_topk import TopK
+from approx_topk.exact_methods import radix_select
 
 
 def test__radix_select__no_batch__equal_to_built_in() -> None:
@@ -24,7 +25,7 @@ def test__radix_select__negative_dim__does_not_crash() -> None:
     radix_select.topk(xs, k=128, dim=-1)
 
 
-def _test(method: ExactTopK, xs_shape: tuple[int, ...], dim: int) -> None:
+def _test(method: TopK, xs_shape: tuple[int, ...], dim: int) -> None:
     for k in [0, 12, 50, 100, xs_shape[dim]]:
         xs = torch.randn(xs_shape, device="cuda:0")
         values, indices = method(xs, k, dim)

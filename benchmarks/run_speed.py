@@ -7,11 +7,12 @@ import torch
 from torch.cuda import Event
 from tqdm import tqdm
 
-from approx_topk.exact_methods import ExactTopK, radix_select
+from approx_topk import TopK
+from approx_topk.exact_methods import radix_select, torch_default
 
 
 def run_config(
-    method: ExactTopK, batch_size: int, topk_size: int, k: int
+    method: TopK, batch_size: int, topk_size: int, k: int
 ) -> tuple[float, float]:
     n_seqs = 50
     n_repeats = 20
@@ -37,7 +38,10 @@ def run_config(
     return torch.mean(ds).item(), torch.std(ds).item()
 
 
-methods = {"radix whole sequence": radix_select.topk}
+methods = {
+    "radix whole sequence": radix_select.topk,
+    "torch default": torch_default.topk,
+}
 batch_sizes = [32]
 topk_sizes = list(range(1_000, 20_000, 1_000))
 
