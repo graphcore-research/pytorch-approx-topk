@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from approx_topk.bucketed import bucket
+from approx_topk.autobucket import bucket
 from approx_topk.exact_methods import torch_default
 
 
@@ -53,3 +53,13 @@ def test__bucket__only_one_bucket__equal_to_exact_top_k() -> None:
 
     assert torch.allclose(values.sort().values, expected_values.sort().values)
     assert torch.allclose(indices.sort().values, expected_indices.sort().values)
+
+
+def test__bucket__one_k_per_bucket__does_not_crash() -> None:
+    bucketed_topk = bucket(torch_default.topk, k_per_bucket=1)
+    xs = torch.randn(32, 1000)
+
+    values, indices = bucketed_topk(xs, k=16, dim=-1)
+
+    assert values.shape == (32, 16)
+    assert indices.shape == (32, 16)
