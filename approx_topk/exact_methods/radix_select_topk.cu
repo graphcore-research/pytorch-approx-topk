@@ -32,7 +32,7 @@ namespace pytorch_topk
     }
   };
 
-  template <typename T, typename IndexType, int Dim, bool WithKthValues>
+  template <typename T, typename IndexType, int Dim>
   C10_LAUNCH_BOUNDS_1(1024)
   __global__ void gatherTopK(at::cuda::detail::TensorInfo<const T, IndexType> input,
                              IndexType inputSliceSize,
@@ -46,8 +46,7 @@ namespace pytorch_topk
                              IndexType topKWithinSliceStride,
 
                              at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
-                             IndexType indicesWithinSliceStride,
-                             T *kthValues)
+                             IndexType indicesWithinSliceStride)
   {
     // Indices are limited to integer fp precision, so counts can fit in
     // int32, regardless of IndexType
@@ -76,18 +75,11 @@ namespace pytorch_topk
 
     // Find the k-th highest element in our input
     T topKValue;
-    if (WithKthValues)
-    {
-      topKValue = kthValues[slice];
-    }
-    else
-    {
-      topKValue = static_cast<T>(0);
-      radixSelect<T, typename TopKTypeConfig<T>::RadixType, IndexType>(
-          inputSliceStart, outputSliceSize, largest,
-          inputSliceSize, inputWithinSliceStride,
-          smem, &topKValue);
-    }
+    topKValue = static_cast<T>(0);
+    radixSelect<T, typename TopKTypeConfig<T>::RadixType, IndexType>(
+        inputSliceStart, outputSliceSize, largest,
+        inputSliceSize, inputWithinSliceStride,
+        smem, &topKValue);
     const auto topKConverted = at::native::TopKTypeConfig<T>::convert(topKValue);
 
     // Every value that is strictly less/greater than `pattern`
@@ -207,7 +199,7 @@ namespace pytorch_topk
     TORCH_INTERNAL_ASSERT(getGridFromTiles(numInputSlices, grid), "Too many slices for topk");
     int warp_size = at::cuda::warp_size();
     dim3 block(std::min(at::ceil_div((int64_t)inputSliceSize, (int64_t)warp_size) * (int64_t)warp_size, (int64_t)1024));
-    gatherTopK<T, IndexType, Dim, /* WithKthValues= */ false><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+    gatherTopK<T, IndexType, Dim><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
         input,
         inputSliceSize,
         outputSliceSize,
@@ -217,8 +209,7 @@ namespace pytorch_topk
         topK,
         topKWithinSliceStride,
         indices,
-        indicesWithinSliceStride,
-        nullptr);
+        indicesWithinSliceStride);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
 
@@ -240,17 +231,17 @@ namespace pytorch_topk
     auto input = self.contiguous();
     // static_cast is required to ensure that the correct type (INDEX_T)
     // is provided to the kernel for the arguments.
-#define RUN_K(INDEX_T, DIM)                                                                                                                          \
-  pytorch_topk::launch<scalar_t, INDEX_T, DIM>(                                                                                                      \
-      inputInfo,                                                                                                                                     \
-      static_cast<INDEX_T>(sliceSize),                                                                                                               \
-      static_cast<INDEX_T>(k),                                                                                                                       \
-      largest,                                                                                                                                       \
-      static_cast<INDEX_T>(numInputSlices), /* The actual dimension that the k-selection is running in */ /* may have changed from collapseDims() */ \
-      static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]),                                                                                     \
-      topKInfo,                                                                                                                                      \
-      static_cast<INDEX_T>(topKInfo.strides[collapseTopKDim]),                                                                                       \
-      indicesInfo,                                                                                                                                   \
+#define RUN_K(INDEX_T, DIM)                                      \
+  pytorch_topk::launch<scalar_t, INDEX_T, DIM>(                  \
+      inputInfo,                                                 \
+      static_cast<INDEX_T>(sliceSize),                           \
+      static_cast<INDEX_T>(k),                                   \
+      largest,                                                   \
+      static_cast<INDEX_T>(numInputSlices),                      \
+      static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]), \
+      topKInfo,                                                  \
+      static_cast<INDEX_T>(topKInfo.strides[collapseTopKDim]),   \
+      indicesInfo,                                               \
       static_cast<INDEX_T>(indicesInfo.strides[collapseIndicesDim]));
 
 #define RUN_DIM(INDEX_T) \
