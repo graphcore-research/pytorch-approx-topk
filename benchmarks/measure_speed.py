@@ -107,7 +107,7 @@ if __name__ == "__main__":
         [
             Experiment(
                 method=method,
-                args={},
+                args=args,
                 compile=compile,
                 batch_size=32,
                 topk_size=topk_size,
@@ -120,15 +120,17 @@ if __name__ == "__main__":
                 "reduce-overhead",
                 # "max-autotune",
             ]
-            for method in [
-                fake_topk_sum,
-                torch_default.topk,
-                bucket_argmax.topk_autobucket,
-                bucket_argmax.topk_torch,
-                # radix_select.topk,
+            for method, args in [
+                (fake_topk_sum, {}),
+                (torch_default.topk, {}),
+                (bucket_argmax.topk_autobucket, {}),
+                (bucket_argmax.topk_torch, {}),
+                (bucket_argmax.topk_triton, dict(block_size=128)),
+                # (radix_select.topk, {}),
             ]
             for topk_size in [2**n for n in [12, 14, 16]]
             if not (compile and method is radix_select.topk)
+            if not (compile == "reduce-overhead" and method is bucket_argmax.topk_triton)
         ],
         Path("results/measure_speed.jsonl"),
     )
