@@ -5,9 +5,12 @@ from torch import Tensor
 from torch.utils import cpp_extension
 
 
-def topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
-    assert xs.is_cuda
-    assert k <= xs.shape[dim]
+def topk(xs: Tensor, k: int, dim: int, j: int | None = None) -> tuple[Tensor, Tensor]:
+    """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
+
+    :param j: if not None, xs is split into k/j buckets, and then the top-j is computed
+              for each bucket.
+    """
     if dim < 0:
         dim = xs.ndim + dim
 
@@ -22,7 +25,9 @@ def topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
     indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
-    impl.topk(xs, k, dim, largest, values, indices)
+    if j is None:
+        j = k
+    impl.topk(xs, k, j, dim, largest, values, indices)
     return values, indices
 
 

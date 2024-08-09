@@ -1,7 +1,11 @@
-// radix-select top-k implementation.
+// Radix-select top-k that splits a large top-k into buckets to improve parallelism.
 // Largely copied from Pytorch:
 // https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/TensorTopK.cu
-// ...but with the multi-block code removed.
+//
+// The original PyTorch implementation computes an exact top-k across multiple SMs. This
+// implementation only supports computing an exact top-k on a single SM, but allows an
+// approximate top-k to be computed by splitting the sequence into buckets and computing
+// an exact top-k of each bucket individually.
 
 // #define TORCH_ASSERT_NO_OPERATORS
 #include <ATen/core/TensorBase.h>
@@ -37,6 +41,7 @@ namespace pytorch_topk
   __global__ void gatherTopK(at::cuda::detail::TensorInfo<const T, IndexType> input,
                              IndexType inputSliceSize,
                              IndexType outputSliceSize, // aka `k`
+                             IndexType j,
                              bool largest,
 
                              IndexType numInputSlices,
@@ -55,30 +60,39 @@ namespace pytorch_topk
 #else
     __shared__ int smem[32]; // one per each warp, up to warp limit
 #endif
-    IndexType slice = at::native::getLinearBlockId<IndexType>();
-    if (slice >= numInputSlices)
+    IndexType numBuckets = outputSliceSize == 0 ? 1 : outputSliceSize / j;
+    IndexType inputBucketSize = inputSliceSize / numBuckets;
+    IndexType outputBucketSize = outputSliceSize / numBuckets;
+    IndexType sliceIndex = blockIdx.x;
+    IndexType bucketIndex = blockIdx.y;
+
+    if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
     {
       return;
     }
 
     // Find the start offset for our slice
     IndexType sliceStartIndex =
-        at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(slice, input);
+        at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
     IndexType topKSliceStartIndex =
-        at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(slice, topK);
+        at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
     IndexType indicesSliceStartIndex =
-        at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(slice, indices);
+        at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
+    // Adjust the indices to the start of the bucket within the slice.
+    sliceStartIndex += bucketIndex * inputBucketSize;
+    topKSliceStartIndex += bucketIndex * outputBucketSize;
+    indicesSliceStartIndex += bucketIndex * outputBucketSize;
 
     const T *inputSliceStart = &input.data[sliceStartIndex];
     T *topKSliceStart = &topK.data[topKSliceStartIndex];
     int64_t *indicesSliceStart = &indices.data[indicesSliceStartIndex];
 
-    // Find the k-th highest element in our input
+    // Find the j-th highest element in this block's slice and bucket.
     T topKValue;
     topKValue = static_cast<T>(0);
     radixSelect<T, typename TopKTypeConfig<T>::RadixType, IndexType>(
-        inputSliceStart, outputSliceSize, largest,
-        inputSliceSize, inputWithinSliceStride,
+        inputSliceStart, j, largest,
+        inputBucketSize, inputWithinSliceStride,
         smem, &topKValue);
     const auto topKConverted = at::native::TopKTypeConfig<T>::convert(topKValue);
 
@@ -96,12 +110,12 @@ namespace pytorch_topk
     // All threads need to participate in the loop and the prefix sum,
     // but not necessarily in the load; hence loop bounds being rounded
     // up to a multiple of the block dim.
-    IndexType numIterations = round_up(inputSliceSize, (IndexType)blockDim.x);
+    IndexType numIterations = round_up(inputBucketSize, (IndexType)blockDim.x);
     IndexType writeIndexStart = 0;
 
     for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x)
     {
-      bool inRange = (i < inputSliceSize);
+      bool inRange = (i < inputBucketSize);
       T v =
           inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
       const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
@@ -123,29 +137,28 @@ namespace pytorch_topk
       if (hasTopK)
       {
         int writeIndex = writeIndexStart + index;
-        CUDA_KERNEL_ASSERT(writeIndex < outputSliceSize);
+        CUDA_KERNEL_ASSERT(writeIndex < j);
 
         IndexType topKOffset = writeIndex * topKWithinSliceStride;
         IndexType indexOffset = writeIndex * indicesWithinSliceStride;
 
         topKSliceStart[topKOffset] = v;
-        indicesSliceStart[indexOffset] = i;
+        indicesSliceStart[indexOffset] = i + bucketIndex * inputBucketSize;
       }
 
       writeIndexStart += carry;
     }
 
     // We need to fill in the rest with actual == top-K values.
-    // The number that we need is outputSliceSize -
-    // writeIndexStart. There might be more than that number available,
-    // in which case we have to choose the first seen set. We do this
+    // The number that we need is j - writeIndexStart. There might be more than that
+    // number available, in which case we have to choose the first seen set. We do this
     // via a prefix sum to calculate indices for writing results.
-    CUDA_KERNEL_ASSERT(outputSliceSize >= writeIndexStart);
-    IndexType topKRemaining = (outputSliceSize - writeIndexStart);
+    CUDA_KERNEL_ASSERT(j >= writeIndexStart);
+    IndexType topKRemaining = j - writeIndexStart;
 
     for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x)
     {
-      bool inRange = (i < inputSliceSize);
+      bool inRange = (i < inputBucketSize);
       T v =
           inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
       const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
@@ -159,13 +172,13 @@ namespace pytorch_topk
       if (hasTopK && index < topKRemaining)
       {
         int writeIndex = writeIndexStart + index;
-        CUDA_KERNEL_ASSERT(writeIndex < outputSliceSize);
+        CUDA_KERNEL_ASSERT(writeIndex < j);
 
         IndexType topKOffset = writeIndex * topKWithinSliceStride;
         IndexType indexOffset = writeIndex * indicesWithinSliceStride;
 
         topKSliceStart[topKOffset] = v;
-        indicesSliceStart[indexOffset] = i;
+        indicesSliceStart[indexOffset] = i + bucketIndex * inputBucketSize;
       }
 
       if (carry >= topKRemaining)
@@ -183,6 +196,7 @@ namespace pytorch_topk
       at::cuda::detail::TensorInfo<const T, IndexType> input,
       IndexType inputSliceSize,
       IndexType outputSliceSize, // aka `k`
+      IndexType j,
       bool largest,
 
       IndexType numInputSlices,
@@ -194,15 +208,31 @@ namespace pytorch_topk
       at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
       IndexType indicesWithinSliceStride)
   {
+    // We use the x dimension of the grid for batches provided by the user, and the y
+    // dimension for buckets.
+    // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
+    TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
+    TORCH_CHECK(outputSliceSize >= 0, "topk k cannot be negative");
+    TORCH_CHECK(outputSliceSize == 0 || j > 0, "topk j must be > 0");
+    TORCH_CHECK(outputSliceSize == 0 || outputSliceSize % j == 0,
+                "topk j must divide k");
+    IndexType numBuckets = outputSliceSize == 0 ? 1 : outputSliceSize / j;
+    TORCH_CHECK(inputSliceSize % numBuckets == 0,
+                "topk input must divide exactly into buckets");
+    IndexType inputBucketSize = inputSliceSize / numBuckets;
+    dim3 grid = dim3(numInputSlices, numBuckets, 1);
 
-    dim3 grid;
-    TORCH_INTERNAL_ASSERT(getGridFromTiles(numInputSlices, grid), "Too many slices for topk");
     int warp_size = at::cuda::warp_size();
-    dim3 block(std::min(at::ceil_div((int64_t)inputSliceSize, (int64_t)warp_size) * (int64_t)warp_size, (int64_t)1024));
+    int num_threads = std::min(
+        at::ceil_div((int64_t)inputBucketSize, (int64_t)warp_size) * (int64_t)warp_size,
+        (int64_t)1024);
+    dim3 block(num_threads);
+
     gatherTopK<T, IndexType, Dim><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
         input,
         inputSliceSize,
         outputSliceSize,
+        j,
         largest,
         numInputSlices,
         inputWithinSliceStride,
@@ -214,14 +244,12 @@ namespace pytorch_topk
   }
 
   void launch_gather_topk_kernel(
-      const Tensor &self, int64_t k, int64_t dim, bool largest,
+      const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
       const Tensor &values, const Tensor &indices)
   {
-    // checkAllSameGPU(__func__, {topK_arg, indices_arg, input_arg});
-    // TORCH_CHECK(self.dtype() == at::kFloat);
-    // TORCH_CHECK(b.dtype() == at::kFloat);
-    // TORCH_INTERNAL_ASSERT(a.device().type() == at::DeviceType::CUDA);
-    // TORCH_INTERNAL_ASSERT(b.device().type() == at::DeviceType::CUDA);
+    TensorArg input_arg{self, "xs", 1}, topK_arg{values, "valuesOutput", 2},
+        indices_arg{indices, "indicesOutput", 3};
+    checkAllSameGPU(__func__, {input_arg, topK_arg, indices_arg});
 
     int numDims = self.dim();
     numDims = numDims == 0 ? 1 : numDims;
@@ -236,6 +264,7 @@ namespace pytorch_topk
       inputInfo,                                                 \
       static_cast<INDEX_T>(sliceSize),                           \
       static_cast<INDEX_T>(k),                                   \
+      static_cast<INDEX_T>(j),                                   \
       largest,                                                   \
       static_cast<INDEX_T>(numInputSlices),                      \
       static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]), \
