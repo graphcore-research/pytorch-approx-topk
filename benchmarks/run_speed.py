@@ -7,8 +7,7 @@ import torch
 from torch.cuda import Event
 from tqdm import tqdm
 
-from approx_topk import TopK
-from approx_topk.exact_methods import radix_select, torch_default
+from approx_topk import TopK, radix_select, torch_default
 
 
 def run_config(

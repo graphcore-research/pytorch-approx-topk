@@ -1,3 +1,5 @@
+"""Wrapper around torch.topk() to match our topk Protocol."""
+
 import torch
 from torch import Tensor
 

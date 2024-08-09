@@ -31,5 +31,5 @@ def _get_impl():
     # TODO: Work out how to package the C code properly.
     return cpp_extension.load(
         name="radix_select_topk",
-        sources="approx_topk/exact_methods/radix_select_topk.cu",
+        sources="approx_topk/radix_select.cu",
     )

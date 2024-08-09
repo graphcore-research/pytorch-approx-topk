@@ -11,9 +11,8 @@ import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
 
-from approx_topk import TopK
+from approx_topk import TopK, radix_select
 from approx_topk.autobucket import bucket
-from approx_topk.exact_methods import radix_select
 
 n_repeats = 100
 n = 16 * 32 * 40

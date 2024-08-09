@@ -1,8 +1,8 @@
 import pytest
 import torch
 
+from approx_topk import torch_default
 from approx_topk.autobucket import bucket
-from approx_topk.exact_methods import torch_default
 
 
 def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:

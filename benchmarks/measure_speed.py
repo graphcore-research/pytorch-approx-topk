@@ -10,8 +10,7 @@ import tqdm
 from torch import Tensor
 from torch.cuda import Event
 
-from approx_topk import TopK, bucket_argmax
-from approx_topk.exact_methods import radix_select, torch_default
+from approx_topk import TopK, bucket_argmax, radix_select, torch_default
 
 
 @dataclass

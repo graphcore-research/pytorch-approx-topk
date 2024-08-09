@@ -1,7 +1,6 @@
 import torch
 
-from approx_topk import TopK
-from approx_topk.exact_methods import radix_select
+from approx_topk import TopK, radix_select
 
 
 def test__radix_select__no_batch__equal_to_built_in() -> None:
