@@ -60,39 +60,59 @@ namespace pytorch_topk
 #else
     __shared__ int smem[32]; // one per each warp, up to warp limit
 #endif
-    IndexType numBuckets = outputSliceSize == 0 ? 1 : outputSliceSize / j;
-    IndexType inputBucketSize = inputSliceSize / numBuckets;
-    IndexType outputBucketSize = outputSliceSize / numBuckets;
     IndexType sliceIndex = blockIdx.x;
     IndexType bucketIndex = blockIdx.y;
-
+    IndexType numBuckets = outputSliceSize == 0 ? 1 : outputSliceSize / j;
     if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
     {
       return;
     }
 
-    // Find the start offset for our slice
-    IndexType sliceStartIndex =
-        at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
-    IndexType topKSliceStartIndex =
-        at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
-    IndexType indicesSliceStartIndex =
-        at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
-    // Adjust the indices to the start of the bucket within the slice.
-    sliceStartIndex += bucketIndex * inputBucketSize;
-    topKSliceStartIndex += bucketIndex * outputBucketSize;
-    indicesSliceStartIndex += bucketIndex * outputBucketSize;
+    IndexType outputBucketSize = outputSliceSize / numBuckets;
+    // If the number of buckets divides the input slice size then we just equally divide
+    // the input slice between the buckets.
+    // If the number of buckets does not exactly divide the slice size then we round the
+    // bucket size down leaving some remainder, r, of the slice. In order to cover the
+    // remainder, we increase the size of the first r buckets by one.
+    IndexType baseInputBucketSize = inputSliceSize / numBuckets;
+    IndexType remainder =
+        inputSliceSize - baseInputBucketSize * (inputSliceSize / baseInputBucketSize);
+    IndexType thisBlockInputBucketSize = baseInputBucketSize;
+    if (bucketIndex < remainder)
+    {
+      thisBlockInputBucketSize += 1;
+    }
 
-    const T *inputSliceStart = &input.data[sliceStartIndex];
-    T *topKSliceStart = &topK.data[topKSliceStartIndex];
-    int64_t *indicesSliceStart = &indices.data[indicesSliceStartIndex];
+    // Find the start offset of the slice in the input and outputs.
+    IndexType inputStartIndex =
+        at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
+    IndexType valuesOutputStartIndex =
+        at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
+    IndexType indicesOutputStartIndex =
+        at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
+
+    // Work out the start position of this block's bucket in the input.
+    IndexType previousBigBuckets = min(bucketIndex, remainder);
+    IndexType previousNormalBuckets =
+        bucketIndex > remainder ? bucketIndex - remainder : 0;
+    IndexType inputBucketOffset =
+        previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
+
+    // Adjust the indices to point at the start of the bucket within the slice.
+    inputStartIndex += inputBucketOffset;
+    valuesOutputStartIndex += bucketIndex * outputBucketSize;
+    indicesOutputStartIndex += bucketIndex * outputBucketSize;
+
+    const T *inputStart = &input.data[inputStartIndex];
+    T *valuesOutputStart = &topK.data[valuesOutputStartIndex];
+    int64_t *indicesOutputStart = &indices.data[indicesOutputStartIndex];
 
     // Find the j-th highest element in this block's slice and bucket.
     T topKValue;
     topKValue = static_cast<T>(0);
     radixSelect<T, typename TopKTypeConfig<T>::RadixType, IndexType>(
-        inputSliceStart, j, largest,
-        inputBucketSize, inputWithinSliceStride,
+        inputStart, j, largest,
+        thisBlockInputBucketSize, inputWithinSliceStride,
         smem, &topKValue);
     const auto topKConverted = at::native::TopKTypeConfig<T>::convert(topKValue);
 
@@ -110,14 +130,14 @@ namespace pytorch_topk
     // All threads need to participate in the loop and the prefix sum,
     // but not necessarily in the load; hence loop bounds being rounded
     // up to a multiple of the block dim.
-    IndexType numIterations = round_up(inputBucketSize, (IndexType)blockDim.x);
+    IndexType numIterations = round_up(thisBlockInputBucketSize, (IndexType)blockDim.x);
     IndexType writeIndexStart = 0;
 
     for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x)
     {
-      bool inRange = (i < inputBucketSize);
+      bool inRange = (i < thisBlockInputBucketSize);
       T v =
-          inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
+          inRange ? doLdg(&inputStart[i * inputWithinSliceStride]) : static_cast<T>(0);
       const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
       bool hasTopK;
       if (largest)
@@ -142,8 +162,8 @@ namespace pytorch_topk
         IndexType topKOffset = writeIndex * topKWithinSliceStride;
         IndexType indexOffset = writeIndex * indicesWithinSliceStride;
 
-        topKSliceStart[topKOffset] = v;
-        indicesSliceStart[indexOffset] = i + bucketIndex * inputBucketSize;
+        valuesOutputStart[topKOffset] = v;
+        indicesOutputStart[indexOffset] = i + inputBucketOffset;
       }
 
       writeIndexStart += carry;
@@ -158,9 +178,9 @@ namespace pytorch_topk
 
     for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x)
     {
-      bool inRange = (i < inputBucketSize);
+      bool inRange = (i < thisBlockInputBucketSize);
       T v =
-          inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
+          inRange ? doLdg(&inputStart[i * inputWithinSliceStride]) : static_cast<T>(0);
       const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
       bool hasTopK = inRange && (convertedV == topKConverted);
 
@@ -177,8 +197,8 @@ namespace pytorch_topk
         IndexType topKOffset = writeIndex * topKWithinSliceStride;
         IndexType indexOffset = writeIndex * indicesWithinSliceStride;
 
-        topKSliceStart[topKOffset] = v;
-        indicesSliceStart[indexOffset] = i + bucketIndex * inputBucketSize;
+        valuesOutputStart[topKOffset] = v;
+        indicesOutputStart[indexOffset] = i + inputBucketOffset;
       }
 
       if (carry >= topKRemaining)
@@ -217,14 +237,12 @@ namespace pytorch_topk
     TORCH_CHECK(outputSliceSize == 0 || outputSliceSize % j == 0,
                 "topk j must divide k");
     IndexType numBuckets = outputSliceSize == 0 ? 1 : outputSliceSize / j;
-    TORCH_CHECK(inputSliceSize % numBuckets == 0,
-                "topk input must divide exactly into buckets");
-    IndexType inputBucketSize = inputSliceSize / numBuckets;
+    IndexType minInputBucketSize = inputSliceSize / numBuckets;
     dim3 grid = dim3(numInputSlices, numBuckets, 1);
 
     int warp_size = at::cuda::warp_size();
     int num_threads = std::min(
-        at::ceil_div((int64_t)inputBucketSize, (int64_t)warp_size) * (int64_t)warp_size,
+        at::ceil_div((int64_t)minInputBucketSize, (int64_t)warp_size) * (int64_t)warp_size,
         (int64_t)1024);
     dim3 block(num_threads);
 
