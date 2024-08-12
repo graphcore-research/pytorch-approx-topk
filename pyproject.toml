@@ -8,7 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = {version = "^2.4.0"}
-
+setuptools = "^72.1.0"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.11.1"
@@ -17,11 +17,14 @@ isort = "^5.13.2"
 black = "^24.8.0"
 types-tqdm = "^4.66.0.20240417"
 
-
-
 [tool.poetry.group.benchmarks.dependencies]
 matplotlib = "^3.9.0"
 tqdm = "^4.66.5"
+
+[tool.poetry.group.extra.dependencies]
+ipykernel = "^6.29.5"
+pandas = "^2.2.2"
+seaborn = "^0.13.2"
 
 [[tool.poetry.source]]
 name = "pytorch_cu124"
