@@ -123,10 +123,10 @@ if __name__ == "__main__":
             for method, args in [
                 (fake_topk_sum, {}),
                 (torch_default.topk, {}),
+                (radix_select.topk, {}),
                 (bucket_argmax.topk_autobucket, {}),
                 (bucket_argmax.topk_torch, {}),
                 (bucket_argmax.topk_triton, dict(block_size=128)),
-                # (radix_select.topk, {}),
             ]
             for topk_size in [2**n for n in [12, 14, 16]]
             if not (compile and method is radix_select.topk)
