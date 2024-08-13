@@ -75,8 +75,7 @@ namespace pytorch_topk
     // bucket size down leaving some remainder, r, of the slice. In order to cover the
     // remainder, we increase the size of the first r buckets by one.
     IndexType baseInputBucketSize = inputSliceSize / numBuckets;
-    IndexType remainder =
-        inputSliceSize - baseInputBucketSize * (inputSliceSize / baseInputBucketSize);
+    IndexType remainder = inputSliceSize - baseInputBucketSize * numBuckets;
     IndexType thisBlockInputBucketSize = baseInputBucketSize;
     if (bucketIndex < remainder)
     {
