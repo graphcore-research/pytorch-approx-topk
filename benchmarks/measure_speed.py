@@ -83,7 +83,6 @@ class Experiment:
         method = d.pop("method")
         d["method"] = f"{method.__module__}.{method.__name__}"
         d["dtype"] = str(d.pop("dtype")).replace("torch.", "")
-        d.update(d.pop("args"))
         return d
 
 
@@ -151,7 +150,7 @@ if __name__ == "__main__":
                 cuda_graphs=True,
                 batch_size=32,
                 topk_size=topk_size,
-                k=topk_size // 8,
+                k=topk_size // topk_ratio,
                 dtype=torch.float16,
                 n_inner_inputs=n_inner_inputs,
             )
@@ -162,18 +161,20 @@ if __name__ == "__main__":
             for compile in [
                 None,
                 "default",
-                "max-autotune-no-cudagraphs",
+                # "max-autotune-no-cudagraphs",
             ]
             for method, args in [
                 (fake_topk_sum, {}),
                 (torch_default.topk, {}),
                 # (radix_select.topk, {}),
-                # (bucket_argmax.topk_autobucket, {}),
                 (bucket_argmax.topk_torch, {}),
-                (bucket_argmax.topk_triton, dict(block_size=128)),
+                (bucket_argmax.topk_triton, dict(block_size=128, kernel="bk")),
+                (bucket_argmax.topk_triton, dict(block_size=64, kernel="bkn")),
             ]
             for topk_size in [2**n for n in [12, 14, 16, 18]]
+            for topk_ratio in [4, 8, 16, 32]
             if not (compile and method is radix_select.topk)
+            if not (compile and method is bucket_argmax.topk_triton)
         ],
         Path("results/measure_speed.jsonl"),
     )
