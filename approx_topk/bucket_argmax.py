@@ -10,25 +10,28 @@ from triton import cdiv
 
 
 def _min_value(dtype: torch.dtype) -> Any:
-    return (
-        torch.finfo(dtype).min
-        if dtype.is_floating_point
-        else torch.iinfo(dtype).min
-    )
+    return torch.finfo(dtype).min if dtype.is_floating_point else torch.iinfo(dtype).min
 
 
-def topk_torch(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
+def topk_torch(
+    xs: Tensor, k: int, dim: int, interleaved: bool = False
+) -> tuple[Tensor, Tensor]:
     dim = dim % xs.ndim  # convert negative dims to positive
     pad_value = (
         torch.finfo(xs.dtype).min
         if xs.dtype.is_floating_point
         else torch.iinfo(xs.dtype).min
     )
-    xs_bucketed = torch.nn.functional.pad(
+    xs_pad = torch.nn.functional.pad(
         xs,
         pad=(0, 0) * len(xs.shape[dim + 1 :]) + (0, -xs.shape[dim] % k),
         value=pad_value,
-    ).unflatten(dim, (k, -1))
+    )
+    xs_bucketed = (
+        xs_pad.unflatten(dim, (-1, k)).swapdims(dim, dim + 1)
+        if interleaved
+        else xs_pad.unflatten(dim, (k, -1))
+    )
     max_ = xs_bucketed.max(dim=dim + 1)
     indices = max_.indices.add_(
         xs_bucketed.shape[dim + 1]
@@ -105,7 +108,7 @@ def _topk_triton_kernel__parallel_bkn(
     n: int,
     BLOCK_BK: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    PAD_VALUE: tl.constexpr
+    PAD_VALUE: tl.constexpr,
 ):
     idx = tl.program_id(axis=0) * BLOCK_BK + tl.arange(0, BLOCK_BK)
     b_idx, k_idx = idx // k, idx % k
