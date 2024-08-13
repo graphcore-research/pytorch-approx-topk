@@ -18,7 +18,7 @@ def topk(xs: Tensor, k: int, dim: int, j: int | None = None) -> tuple[Tensor, Te
 
     output_shape = list(xs.shape)
     output_shape[dim] = k
-    values = torch.empty(output_shape, device=xs.device)
+    values = torch.empty(output_shape, device=xs.device, dtype=xs.dtype)
     # FIXME: Output can be int32 or int64 depending on whether kernel decides if it can
     #        do 32 bit indexing.
     # Oscar: Unsure how to deal with this properly yet.
