@@ -1,5 +1,6 @@
 """Benchmarks the top-50 and top-k recall for different values of k."""
 
+from functools import partial
 from pathlib import Path
 from typing import Callable
 
@@ -9,7 +10,6 @@ from matplotlib.axes import Axes
 from torch import Tensor
 
 from approx_topk import TopK, radix_select
-from approx_topk.autobucket import bucket
 
 n_repeats = 100
 n = 16 * 32 * 40
@@ -19,7 +19,7 @@ distributions = {
 }
 methods = {"exact": radix_select.topk}
 for per_bucket in [1, 2, 4, 8, 16, 32]:
-    methods[f"{per_bucket} per bucket"] = bucket(radix_select.topk, per_bucket)
+    methods[f"{per_bucket} per bucket"] = partial(radix_select.topk, j=per_bucket)
 
 
 def compute_recall(
@@ -37,8 +37,7 @@ def compute_recall(
 def plot_recalls(
     distribution: Callable[[], Tensor], method: TopK, ax: list[Axes], **plot_kwargs
 ) -> None:
-    # ks = list(range(1024, n, 128))
-    ks = [11_000]
+    ks = list(range(1024, n, 128))
     top_50_recall, top_k_recall = zip(
         *[compute_recall(distribution, method, k) for k in ks]
     )
@@ -69,7 +68,6 @@ axes[0, 1].set_title("top k recall")
 for ax in axes[-1]:
     ax.set_xlabel("k")
 for ax in axes.flatten():
-    ax.set_ylim(bottom=0.0)
     ax.grid(axis="x", which="both")
 
 plt.tight_layout()
