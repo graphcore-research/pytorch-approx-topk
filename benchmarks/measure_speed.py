@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Callable
+from typing import Any, Callable, Optional
 
 import torch
 import tqdm
@@ -166,7 +166,7 @@ if __name__ == "__main__":
             for method, args in [
                 (fake_topk_sum, {}),
                 (torch_default.topk, {}),
-                # (radix_select.topk, {}),
+                (radix_select.topk, dict(j=32, compile_mode="optimize")),
                 (bucket_argmax.topk_torch, {}),
                 (bucket_argmax.topk_triton, dict(block_size=128, kernel="bk")),
                 (bucket_argmax.topk_triton, dict(block_size=64, kernel="bkn")),
