@@ -1,11 +1,20 @@
 from functools import cache
+from typing import Literal
 
 import torch
 from torch import Tensor
 from torch.utils import cpp_extension
 
+CompileMode = Literal["default", "optimize", "debug"]
 
-def topk(xs: Tensor, k: int, dim: int, j: int | None = None) -> tuple[Tensor, Tensor]:
+
+def topk(
+    xs: Tensor,
+    k: int,
+    dim: int,
+    j: int | None = None,
+    compile_mode: CompileMode = "optimize",
+) -> tuple[Tensor, Tensor]:
     """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
 
     :param j: if not None, xs is split into k/j buckets, and then the top-j is computed
@@ -14,7 +23,7 @@ def topk(xs: Tensor, k: int, dim: int, j: int | None = None) -> tuple[Tensor, Te
     if dim < 0:
         dim = xs.ndim + dim
 
-    impl = _get_impl()
+    impl = _get_impl(compile_mode)
 
     output_shape = list(xs.shape)
     output_shape[dim] = k
@@ -32,9 +41,17 @@ def topk(xs: Tensor, k: int, dim: int, j: int | None = None) -> tuple[Tensor, Te
 
 
 @cache
-def _get_impl():
-    # TODO: Work out how to package the C code properly.
+def _get_impl(compile_mode: CompileMode):
+    if compile_mode == "default":
+        nvcc_flags = []
+    elif compile_mode == "optimize":
+        nvcc_flags = ["-O3"]
+    elif compile_mode == "debug":
+        nvcc_flags = ["-g", "-G"]
+
     return cpp_extension.load(
         name="radix_select_topk",
+        # TODO: Work out how to package the C code properly.
         sources="approx_topk/radix_select.cu",
+        extra_cuda_cflags=nvcc_flags,
     )
