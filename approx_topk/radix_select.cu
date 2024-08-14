@@ -22,7 +22,7 @@
 
 #include <c10/macros/Macros.h>
 
-namespace pytorch_topk
+namespace approx_topk
 {
   using namespace at;
   using namespace at::native;
@@ -38,20 +38,21 @@ namespace pytorch_topk
 
   template <typename T, typename IndexType, int Dim>
   C10_LAUNCH_BOUNDS_1(1024)
-  __global__ void gatherTopK(at::cuda::detail::TensorInfo<const T, IndexType> input,
-                             IndexType inputSliceSize,
-                             IndexType outputSliceSize, // aka `k`
-                             IndexType j,
-                             bool largest,
+  __global__ void radixSelectTopK(
+      at::cuda::detail::TensorInfo<const T, IndexType> input,
+      IndexType inputSliceSize,
+      IndexType outputSliceSize, // aka `k`
+      IndexType j,
+      bool largest,
 
-                             IndexType numInputSlices,
-                             IndexType inputWithinSliceStride,
+      IndexType numInputSlices,
+      IndexType inputWithinSliceStride,
 
-                             at::cuda::detail::TensorInfo<T, IndexType> topK,
-                             IndexType topKWithinSliceStride,
+      at::cuda::detail::TensorInfo<T, IndexType> topK,
+      IndexType topKWithinSliceStride,
 
-                             at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
-                             IndexType indicesWithinSliceStride)
+      at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
+      IndexType indicesWithinSliceStride)
   {
     // Indices are limited to integer fp precision, so counts can fit in
     // int32, regardless of IndexType
@@ -245,7 +246,7 @@ namespace pytorch_topk
         (int64_t)1024);
     dim3 block(num_threads);
 
-    gatherTopK<T, IndexType, Dim><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+    radixSelectTopK<T, IndexType, Dim><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
         input,
         inputSliceSize,
         outputSliceSize,
@@ -260,7 +261,7 @@ namespace pytorch_topk
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
 
-  void launch_gather_topk_kernel(
+  void launch_radix_select_topk_kernel(
       const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
       const Tensor &values, const Tensor &indices)
   {
@@ -277,7 +278,7 @@ namespace pytorch_topk
     // static_cast is required to ensure that the correct type (INDEX_T)
     // is provided to the kernel for the arguments.
 #define RUN_K(INDEX_T, DIM)                                      \
-  pytorch_topk::launch<scalar_t, INDEX_T, DIM>(                  \
+  launch<scalar_t, INDEX_T, DIM>(                                \
       inputInfo,                                                 \
       static_cast<INDEX_T>(sliceSize),                           \
       static_cast<INDEX_T>(k),                                   \
@@ -382,7 +383,7 @@ namespace pytorch_topk
 
   PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
   {
-    m.def("topk", &launch_gather_topk_kernel);
+    m.def("topk", &launch_radix_select_topk_kernel);
   }
 
-} // pytorch_topk
+} // approx_topk
