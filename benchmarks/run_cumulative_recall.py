@@ -4,6 +4,7 @@ Cumulative recall at j = the probability that the approximate method retrieves a
 the top-j elements.
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Callable
 
@@ -23,7 +24,7 @@ distributions = {
 k_ratios = [8, 16]
 methods = {"exact": radix_select.topk}
 for per_bucket in [1, 2, 4, 8, 16, 32]:
-    methods[f"{per_bucket} per bucket"] = bucket(radix_select.topk, per_bucket)
+    methods[f"{per_bucket} per bucket"] = partial(radix_select.topk, j=per_bucket)
 
 
 def compute_cumulative_recall(
