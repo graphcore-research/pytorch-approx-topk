@@ -1,11 +1,7 @@
-from functools import cache
-from typing import Literal
-
 import torch
 from torch import Tensor
-from torch.utils import cpp_extension
 
-CompileMode = Literal["default", "optimize", "debug"]
+from approx_topk.cuda_extensions import CompileMode, load_cuda_extension
 
 
 def topk(
@@ -23,7 +19,7 @@ def topk(
     if dim < 0:
         dim = xs.ndim + dim
 
-    impl = _get_impl(compile_mode)
+    impl = load_cuda_extension("radix_select.cu", compile_mode)
 
     output_shape = list(xs.shape)
     output_shape[dim] = k
@@ -38,21 +34,3 @@ def topk(
         j = k
     impl.topk(xs, k, j, dim, largest, values, indices)
     return values, indices
-
-
-@cache
-def _get_impl(compile_mode: CompileMode):
-    if compile_mode == "default":
-        nvcc_flags = []
-    elif compile_mode == "optimize":
-        nvcc_flags = ["-O3"]
-    elif compile_mode == "debug":
-        nvcc_flags = ["-g", "-G"]
-    nvcc_flags += ["--generate-line-info"]
-
-    return cpp_extension.load(
-        name="radix_select_topk",
-        # TODO: Work out how to package the C code properly.
-        sources="approx_topk/radix_select.cu",
-        extra_cuda_cflags=nvcc_flags,
-    )
