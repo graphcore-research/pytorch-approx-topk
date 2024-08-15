@@ -232,7 +232,6 @@ namespace approx_topk
     // dimension for buckets.
     // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
     TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-    TORCH_CHECK(outputSliceSize >= 0, "topk k cannot be negative");
     TORCH_CHECK(outputSliceSize == 0 || j > 0, "topk j must be > 0");
     TORCH_CHECK(outputSliceSize == 0 || outputSliceSize % j == 0,
                 "topk j must divide k");
