@@ -132,7 +132,7 @@ def topk_triton(
     dim = dim % xs.ndim  # convert negative dims to positive
     if dim != xs.ndim - 1:
         values, indices = topk_triton(
-            xs.movedim(dim, -1), k=k, dim=-1, block_size=block_size
+            xs.movedim(dim, -1), k=k, dim=-1, block_size=block_size, kernel=kernel
         )
         return values.movedim(-1, dim), indices.movedim(-1, dim)
 
