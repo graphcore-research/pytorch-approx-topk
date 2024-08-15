@@ -20,6 +20,6 @@ def load_cuda_extension(file_name: str, compile_mode: CompileMode):
     return cpp_extension.load(
         name="radix_select_topk",
         # TODO: Work out how to package the C code properly.
-        sources=Path("approx_topk") / file_name,
+        sources=[str(Path("approx_topk") / file_name)],
         extra_cuda_cflags=nvcc_flags,
     )
