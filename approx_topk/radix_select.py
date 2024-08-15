@@ -18,6 +18,12 @@ def topk(
     """
     if dim < 0:
         dim = xs.ndim + dim
+    if j is None:
+        j = k
+    if j < k and dim != xs.ndim - 1:
+        raise NotImplementedError(
+            "Bucketed radix select topk only currently works on the last dim"
+        )
 
     impl = load_cuda_extension("radix_select.cu", compile_mode)
 
@@ -30,7 +36,5 @@ def topk(
     indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
-    if j is None:
-        j = k
     impl.topk(xs, k, j, dim, largest, values, indices)
     return values, indices
