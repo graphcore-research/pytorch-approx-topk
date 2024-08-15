@@ -48,6 +48,7 @@ def _get_impl(compile_mode: CompileMode):
         nvcc_flags = ["-O3"]
     elif compile_mode == "debug":
         nvcc_flags = ["-g", "-G"]
+    nvcc_flags += ["--generate-line-info"]
 
     return cpp_extension.load(
         name="radix_select_topk",
