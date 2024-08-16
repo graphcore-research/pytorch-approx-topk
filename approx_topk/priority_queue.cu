@@ -157,7 +157,6 @@ namespace approx_topk
     // each warp in its own block.
     // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
     TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-    TORCH_CHECK(k <= MAX_QUEUE_SIZE, "topk k too big")
     TORCH_CHECK(j <= MAX_QUEUE_SIZE, "topk j too big")
     TORCH_CHECK(k == 0 || j > 0, "topk j must be > 0");
     TORCH_CHECK(k == 0 || k % j == 0, "topk j must divide k");
