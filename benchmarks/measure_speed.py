@@ -167,9 +167,9 @@ if __name__ == "__main__":
                 (fake_topk_sum, {}),
                 (torch_default.topk, {}),
                 (radix_select.topk, dict(j=32, compile_mode="optimize")),
-                (bucket_argmax.topk_torch, {}),
-                (bucket_argmax.topk_triton, dict(block_size=128, kernel="bk")),
-                (bucket_argmax.topk_triton, dict(block_size=64, kernel="bkn")),
+                (bucket_argmax.topk_torch, dict(interleaved=True)),
+                (bucket_argmax.topk_triton, dict(interleaved=True, block_size=128, kernel="bk")),
+                (bucket_argmax.topk_triton, dict(interleaved=True, block_size=64, kernel="bkn")),
             ]
             for topk_size in [2**n for n in [12, 14, 16, 18]]
             for topk_ratio in [4, 8, 16, 32]

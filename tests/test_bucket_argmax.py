@@ -45,14 +45,25 @@ def test_bucket_argmax(topk):
     inputs = torch.stack([100 * torch.arange(0, 20), -100 * torch.arange(0, 20)]).to(
         dtype=torch.float32, device="cuda"
     )
-    values, indices = topk(inputs, k=3, dim=1)
+
+    # Regular
+    values, indices = topk(inputs, k=3, dim=1, interleaved=False)
     assert torch.equal(
-        values,
-        torch.tensor(
-            [[600, 1300, 1900], [0, -700, -1400]], dtype=torch.float32, device="cuda"
-        ),
+        values.cpu(), torch.tensor([[600.0, 1300, 1900], [0, -700, -1400]])
     )
-    assert torch.equal(indices, torch.tensor([[6, 13, 19], [0, 7, 14]], device="cuda"))
+    assert torch.equal(indices.cpu(), torch.tensor([[6, 13, 19], [0, 7, 14]]))
+
+    # Transposed
+    values_t, indices_t = topk(inputs.T, k=3, dim=0, interleaved=False)
+    assert torch.equal(values_t.T, values)
+    assert torch.equal(indices_t.T, indices)
+
+    # Interleaved
+    values_i, indices_i = topk(inputs, k=3, dim=1, interleaved=True)
+    assert torch.equal(
+        values_i.cpu(), torch.tensor([[1800.0, 1900, 1700], [0, -100, -200]])
+    )
+    assert torch.equal(indices_i.cpu(), torch.tensor([[18, 19, 17], [0, 1, 2]]))
 
 
 @pytest.mark.parametrize("kernel", ["bk", "bkn"])
@@ -72,9 +83,14 @@ def test_bucket_argmax_triton_fuzz(kernel: str):
         block_size = 2 ** rng.randint(0, 4 + 1)
 
         x = torch.randint(-(2**15), 2**15, (b, n), device="cuda")
-        expected_values, expected_indices = topk_torch(x, k=k, dim=1)
+        expected_values, expected_indices = topk_torch(x, k=k, dim=1, interleaved=False)
         actual_values, actual_indices = topk_triton(
-            x, k=k, dim=1, block_size=block_size, kernel=kernel
+            x,
+            k=k,
+            dim=1,
+            block_size=block_size,
+            kernel=kernel,
+            interleaved=False,
         )
 
         print(f"seed={seed} | b={b} n={n} k={k} block_size={block_size}")

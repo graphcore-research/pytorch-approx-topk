@@ -14,7 +14,7 @@ def _min_value(dtype: torch.dtype) -> Any:
 
 
 def topk_torch(
-    xs: Tensor, k: int, dim: int, interleaved: bool = False
+    xs: Tensor, k: int, dim: int, interleaved: bool
 ) -> tuple[Tensor, Tensor]:
     dim = dim % xs.ndim  # convert negative dims to positive
     pad_value = (
@@ -27,17 +27,17 @@ def topk_torch(
         pad=(0, 0) * len(xs.shape[dim + 1 :]) + (0, -xs.shape[dim] % k),
         value=pad_value,
     )
-    xs_bucketed = (
-        xs_pad.unflatten(dim, (-1, k)).swapdims(dim, dim + 1)
-        if interleaved
-        else xs_pad.unflatten(dim, (k, -1))
+    krange = torch.arange(0, k, dtype=torch.long, device=xs.device).view(
+        (k,) + (1,) * (xs.ndim - dim - 1)
     )
-    max_ = xs_bucketed.max(dim=dim + 1)
-    indices = max_.indices.add_(
-        xs_bucketed.shape[dim + 1]
-        * torch.arange(0, k, dtype=max_.indices.dtype, device=xs.device)
-    )
-    return (max_.values, indices)
+    if interleaved:
+        max_ = xs_pad.unflatten(dim, (-1, k)).max(dim=dim)
+        max_.indices.mul_(k).add_(krange)
+    else:
+        max_ = xs_pad.unflatten(dim, (k, -1)).max(dim=dim + 1)
+        n_per_bucket = xs_pad.shape[dim] // k
+        max_.indices.add_(n_per_bucket * krange)
+    return (max_.values, max_.indices)
 
 
 def _batch_contiguous(x: Tensor) -> Tensor:
@@ -76,22 +76,29 @@ def _topk_triton_kernel__parallel_bk(
     n_chunk: int,
     xs_stride: int,
     BLOCK_SIZE: tl.constexpr,
+    PAD_VALUE: tl.constexpr,
+    INTERLEAVED: tl.constexpr,
 ):
     pidx = tl.program_id(axis=0).to(tl.int64)
     bk_idx = BLOCK_SIZE * pidx + tl.arange(0, BLOCK_SIZE)
     b_idx, k_idx = bk_idx // k, bk_idx % k
-    xs_ptr += b_idx * xs_stride + k_idx * n_chunk
+    xs_ptr += b_idx * xs_stride
+    if INTERLEAVED:
+        k_stride, i_stride = 1, k
+    else:
+        k_stride, i_stride = n_chunk, 1
 
-    max_value = tl.load(xs_ptr, mask=(b_idx < b))
-    max_index = tl.zeros((BLOCK_SIZE,), tl.int64)
+    mask = (b_idx < b) & (k_idx * k_stride < n)
+    max_value = tl.load(xs_ptr + k_idx * k_stride, mask=mask, other=PAD_VALUE)
+    max_i = tl.zeros((BLOCK_SIZE,), tl.int64)
     for i in tl.range(1, n_chunk):
-        mask = (b_idx < b) & (k_idx * n_chunk + i < n)
-        block = tl.load(xs_ptr + i, mask=mask)
+        mask = (b_idx < b) & (k_idx * k_stride + i * i_stride < n)
+        block = tl.load(xs_ptr + k_idx * k_stride + i * i_stride, mask=mask, other=PAD_VALUE)
         mask &= max_value < block
         max_value = tl.where(mask, block, max_value)
-        max_index = tl.where(mask, i, max_index)
+        max_i = tl.where(mask, i, max_i)
 
-    max_index += k_idx * n_chunk
+    max_index = k_idx * k_stride + max_i * i_stride
     tl.store(values_out_ptr + b_idx * k + k_idx, max_value, mask=(b_idx < b))
     tl.store(indices_out_ptr + b_idx * k + k_idx, max_index, mask=(b_idx < b))
 
@@ -109,30 +116,45 @@ def _topk_triton_kernel__parallel_bkn(
     BLOCK_BK: tl.constexpr,
     BLOCK_N: tl.constexpr,
     PAD_VALUE: tl.constexpr,
+    INTERLEAVED: tl.constexpr,
 ):
     idx = tl.program_id(axis=0) * BLOCK_BK + tl.arange(0, BLOCK_BK)
     b_idx, k_idx = idx // k, idx % k
+    if INTERLEAVED:
+        k_stride, i_stride = 1, k
+    else:
+        k_stride, i_stride = n_stride, 1
 
     ni = tl.arange(0, BLOCK_N)
-    n_idx = k_idx[:, None] * n_stride + ni[None, :]
+    n_idx = k_idx[:, None] * k_stride + ni[None, :] * i_stride
     data = tl.load(
         xs_ptr + b_idx[:, None] * xs_stride + n_idx,
         mask=(b_idx[:, None] < b) & (n_idx < n) & (ni < n_stride),
         other=PAD_VALUE,
     )
-    max_value, max_index = tl.max(data, axis=1, return_indices=True)
-    max_index += k_idx * n_stride
+    max_value, max_i = tl.max(data, axis=1, return_indices=True)
+    max_index = k_idx * k_stride + max_i * i_stride
     tl.store(values_out_ptr + b_idx * k + k_idx, max_value, mask=(b_idx < b))
     tl.store(indices_out_ptr + b_idx * k + k_idx, max_index, mask=(b_idx < b))
 
 
 def topk_triton(
-    xs: Tensor, k: int, dim: int, block_size: int, kernel: Literal["bk", "bkn"]
+    xs: Tensor,
+    k: int,
+    dim: int,
+    interleaved: bool,
+    block_size: int,
+    kernel: Literal["bk", "bkn"],
 ) -> tuple[Tensor, Tensor]:
     dim = dim % xs.ndim  # convert negative dims to positive
     if dim != xs.ndim - 1:
         values, indices = topk_triton(
-            xs.movedim(dim, -1), k=k, dim=-1, block_size=block_size, kernel=kernel
+            xs.movedim(dim, -1),
+            k=k,
+            dim=-1,
+            kernel=kernel,
+            block_size=block_size,
+            interleaved=interleaved,
         )
         return values.movedim(-1, dim), indices.movedim(-1, dim)
 
@@ -152,6 +174,8 @@ def topk_triton(
             n_chunk=cdiv(n, k),
             xs_stride=xs.stride(-2),
             BLOCK_SIZE=block_size,
+            PAD_VALUE=_min_value(xs.dtype),
+            INTERLEAVED=interleaved,
         )
     elif kernel == "bkn":
         n_stride = cdiv(n, k)
@@ -167,6 +191,7 @@ def topk_triton(
             BLOCK_BK=block_size,
             BLOCK_N=triton.next_power_of_2(n_stride),
             PAD_VALUE=_min_value(xs.dtype),
+            INTERLEAVED=interleaved,
         )
     else:
         raise ValueError(f"Unknown kernel {kernel!r}")
