@@ -103,5 +103,26 @@ def test__bucketed__topk_ideally_distributed__equal_to_exact() -> None:
     )
 
 
+def test__bucketed__topk_ideally_distributed__long_sequence__equal_to_exact() -> None:
+    n = 10_000
+    k = 8
+    j = 2
+    xs = torch.zeros((2, n), device="cuda")
+    # The bucket size is n / k = 1250, thus we set elements at a stride of half that to
+    # put two elements in each bucket.
+    stride = 1250 // 2
+    xs[0, tuple(range(0, n, stride))] = torch.rand(n // stride, **rng_kwargs(1)) + 2.0
+    xs[1, tuple(range(50, n, stride))] = torch.rand(n // stride, **rng_kwargs(1)) + 2.0
+    # xs[1, -1] = 10.0
+
+    values, indices = topk(xs, k, dim=1, j=j)
+    expected_values, expected_indices = torch.topk(xs, k, dim=1, largest=True)
+
+    assert torch.allclose(values.sort(dim=1).values, expected_values.sort(dim=1).values)
+    assert torch.allclose(
+        indices.sort(dim=1).values, expected_indices.sort(dim=1).values
+    )
+
+
 def rng_kwargs(seed: int):
     return dict(generator=Generator(device="cuda").manual_seed(seed), device="cuda")

@@ -71,7 +71,7 @@ namespace approx_topk
       IndexType indicesWithinSliceStride)
   {
     IndexType sliceIndex = blockIdx.x;
-    IndexType bucketIndex = blockIdx.y + threadIdx.x;
+    IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
     IndexType numBuckets = k == 0 ? 1 : k / j;
     if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
     {
