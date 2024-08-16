@@ -1,12 +1,8 @@
-from functools import partial
-
 import pytest
 import torch
 from torch import Generator
 
 from approx_topk.priority_queue import topk
-
-topk = partial(topk, compile_mode="debug")
 
 
 @pytest.mark.parametrize("k", [0, 2, 8])
