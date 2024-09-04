@@ -156,6 +156,7 @@ namespace approx_topk
     // There is then one thread per bucket. We group these into warps of 32, and put
     // each warp in its own block.
     // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
+    TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
     TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
     IndexType numBuckets = k == 0 ? 1 : k / J;
     int warp_size = at::cuda::warp_size();
@@ -190,7 +191,6 @@ namespace approx_topk
     TORCH_CHECK(numDims <= MAX_DIMS, "input tensor has too many dimensions");
     int64_t sliceSize = self.dim() == 0 ? 1 : self.size(dim);
 
-    TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
     TORCH_CHECK(k == 0 || k % j == 0, "topk j must divide k");
     TORCH_CHECK(k == 0 || j > 0, "topk j must be > 0")
     if (k == 0 && j == 0)
