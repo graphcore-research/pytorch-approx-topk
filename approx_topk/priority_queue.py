@@ -9,6 +9,7 @@ def topk(
     k: int,
     dim: int,
     j: int | None = None,
+    interleaved: bool = True,
     compile_mode: CompileMode = "optimize",
 ) -> tuple[Tensor, Tensor]:
     """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
@@ -34,5 +35,5 @@ def topk(
     indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
-    impl.topk(xs, k, j, dim, largest, values, indices)
+    impl.topk(xs, k, j, dim, largest, interleaved, values, indices)
     return values, indices

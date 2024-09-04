@@ -58,6 +58,7 @@ namespace approx_topk
       IndexType inputSliceSize,
       IndexType k, // aka `k`
       bool largest,
+      bool interleaved,
 
       IndexType numInputSlices,
       IndexType inputWithinSliceStride,
@@ -97,7 +98,16 @@ namespace approx_topk
         previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
     IndexType inputStartIndex =
         at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
-    inputStartIndex += inputBucketOffset;
+    if (interleaved)
+    {
+      inputStartIndex += bucketIndex;
+      inputWithinSliceStride *= numBuckets;
+    }
+    else
+    {
+      inputStartIndex += inputBucketOffset;
+    }
+
     const T *inputStart = &input.data[inputStartIndex];
 
     T valueQueue[J];
@@ -132,7 +142,13 @@ namespace approx_topk
       IndexType topKOffset = i * topKWithinSliceStride;
       IndexType indexOffset = i * indicesWithinSliceStride;
       valuesOutputStart[topKOffset] = valueQueue[i];
-      indicesOutputStart[indexOffset] = indexQueue[i] + inputBucketOffset;
+
+      IndexType trueIndex;
+      if (interleaved)
+        trueIndex = bucketIndex + indexQueue[i] * numBuckets;
+      else
+        trueIndex = inputBucketOffset + indexQueue[i];
+      indicesOutputStart[indexOffset] = trueIndex;
     }
   };
 
@@ -142,6 +158,7 @@ namespace approx_topk
       IndexType inputSliceSize,
       IndexType k, // aka `k`
       bool largest,
+      bool interleaved,
 
       IndexType numInputSlices,
       IndexType inputWithinSliceStride,
@@ -169,6 +186,7 @@ namespace approx_topk
         inputSliceSize,
         k,
         largest,
+        interleaved,
         numInputSlices,
         inputWithinSliceStride,
         topK,
@@ -180,7 +198,7 @@ namespace approx_topk
 
   void launch_priority_queue_topk_kernel(
       const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
-      const Tensor &values, const Tensor &indices)
+      bool interleaved, const Tensor &values, const Tensor &indices)
   {
     TensorArg input_arg{self, "xs", 1}, topK_arg{values, "valuesOutput", 2},
         indices_arg{indices, "indicesOutput", 3};
@@ -209,6 +227,7 @@ namespace approx_topk
       static_cast<INDEX_T>(sliceSize),                           \
       static_cast<INDEX_T>(k),                                   \
       largest,                                                   \
+      interleaved,                                               \
       static_cast<INDEX_T>(numInputSlices),                      \
       static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]), \
       topKInfo,                                                  \
