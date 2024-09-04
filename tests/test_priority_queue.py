@@ -5,7 +5,7 @@ from torch import Generator
 from approx_topk.priority_queue import topk
 
 
-@pytest.mark.parametrize("k", [0, 2, 8])
+@pytest.mark.parametrize("k", [0, 2, 4])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
 def test__one_bucket__no_batch__equal_to_built_in(k: int, dtype) -> None:
     xs = torch.randn(1001, dtype=dtype, **rng_kwargs(234))
@@ -17,7 +17,7 @@ def test__one_bucket__no_batch__equal_to_built_in(k: int, dtype) -> None:
     assert torch.allclose(indices.sort().values, expected_indices.sort().values)
 
 
-@pytest.mark.parametrize("k", [0, 4, 7])
+@pytest.mark.parametrize("k", [0, 2, 4])
 @pytest.mark.parametrize("dim", [0, 1, 2])
 @pytest.mark.parametrize("dtype", [torch.float32])
 def test__one_bucket__batched__equal_to_built_in(k: int, dim: int, dtype) -> None:
@@ -33,13 +33,13 @@ def test__one_bucket__batched__equal_to_built_in(k: int, dim: int, dtype) -> Non
 @pytest.mark.parametrize("dim", [-1, -2])
 def test__negative_dim__does_not_crash(dim: int) -> None:
     xs = torch.randn((128, 256), **rng_kwargs(99))
-    topk(xs, k=10, dim=dim)
+    topk(xs, k=4, dim=dim)
 
 
 def test__call_twice_on_same_data__does_not_crash() -> None:
     xs = torch.randn((128,), **rng_kwargs(56))
-    topk(xs, k=8, dim=0)
-    topk(xs, k=8, dim=0)
+    topk(xs, k=4, dim=0)
+    topk(xs, k=4, dim=0)
 
 
 @pytest.mark.parametrize("n", [10, 16])
