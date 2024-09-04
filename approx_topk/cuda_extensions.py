@@ -18,7 +18,7 @@ def load_cuda_extension(file_name: str, compile_mode: CompileMode):
     nvcc_flags += ["--generate-line-info"]
 
     return cpp_extension.load(
-        name="radix_select_topk",
+        name=file_name.removesuffix(".cu") + "_top_k",
         # TODO: Work out how to package the C code properly.
         sources=[str(Path("approx_topk") / file_name)],
         extra_cuda_cflags=nvcc_flags,
