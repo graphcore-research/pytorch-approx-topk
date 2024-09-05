@@ -19,8 +19,6 @@ namespace approx_topk
   using namespace at;
   using namespace at::native;
 
-  constexpr int MAX_QUEUE_SIZE = 16;
-
   template <typename T>
   struct AddOp
   {
@@ -30,16 +28,17 @@ namespace approx_topk
     }
   };
 
-  template <typename T, typename IndexType>
+  template <typename T, typename IndexType, int J>
   __device__ void insertIntoQueues(
       T v, IndexType index,
       T *valueQueue, IndexType *indexQueue,
-      IndexType j, bool largest)
+      bool largest)
   {
     // The smallest (or largest) item is at the start of the queue. We walk down the
     // queue inserting the new item (if possible), and shifting the existing, smaller,
-    // items backwards.
-    for (IndexType i = 0; i < j; i++)
+    // items towards the front of the queue.
+#pragma unroll
+    for (IndexType i = 0; i < J; i++)
     {
       if ((largest && valueQueue[i] > v) || (!largest && valueQueue[i] < v))
         break;
@@ -53,13 +52,13 @@ namespace approx_topk
     }
   }
 
-  template <typename T, typename IndexType, int Dim>
+  template <typename T, typename IndexType, int Dim, int J>
   __global__ void priorityQueueTopK(
       at::cuda::detail::TensorInfo<const T, IndexType> input,
       IndexType inputSliceSize,
       IndexType k, // aka `k`
-      IndexType j,
       bool largest,
+      bool interleaved,
 
       IndexType numInputSlices,
       IndexType inputWithinSliceStride,
@@ -72,7 +71,7 @@ namespace approx_topk
   {
     IndexType sliceIndex = blockIdx.x;
     IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
-    IndexType numBuckets = k == 0 ? 1 : k / j;
+    IndexType numBuckets = k == 0 ? 1 : k / J;
     if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
     {
       return;
@@ -99,22 +98,33 @@ namespace approx_topk
         previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
     IndexType inputStartIndex =
         at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
-    inputStartIndex += inputBucketOffset;
+    if (interleaved)
+    {
+      inputStartIndex += bucketIndex;
+      inputWithinSliceStride *= numBuckets;
+    }
+    else
+    {
+      inputStartIndex += inputBucketOffset;
+    }
+
     const T *inputStart = &input.data[inputStartIndex];
 
-    T valueQueue[MAX_QUEUE_SIZE];
-    IndexType indexQueue[MAX_QUEUE_SIZE];
-    for (IndexType i = 0; i < j; i++)
+    T valueQueue[J];
+    IndexType indexQueue[J];
+#pragma unroll
+    for (IndexType i = 0; i < J; i++)
     {
       if (largest)
         valueQueue[i] = std::numeric_limits<T>::lowest();
       else
         valueQueue[i] = std::numeric_limits<T>::max();
     }
+
     for (IndexType i = 0; i < inputBucketSize; i++)
     {
       T v = doLdg(&inputStart[i * inputWithinSliceStride]);
-      insertIntoQueues(v, i, valueQueue, indexQueue, j, largest);
+      insertIntoQueues<T, IndexType, J>(v, i, valueQueue, indexQueue, largest);
     }
 
     IndexType valuesOutputStartIndex =
@@ -126,22 +136,29 @@ namespace approx_topk
     T *valuesOutputStart = &topK.data[valuesOutputStartIndex];
     int64_t *indicesOutputStart = &indices.data[indicesOutputStartIndex];
 
-    for (IndexType i = 0; i < j; i++)
+#pragma unroll
+    for (IndexType i = 0; i < J; i++)
     {
       IndexType topKOffset = i * topKWithinSliceStride;
       IndexType indexOffset = i * indicesWithinSliceStride;
       valuesOutputStart[topKOffset] = valueQueue[i];
-      indicesOutputStart[indexOffset] = indexQueue[i] + inputBucketOffset;
+
+      IndexType trueIndex;
+      if (interleaved)
+        trueIndex = bucketIndex + indexQueue[i] * numBuckets;
+      else
+        trueIndex = inputBucketOffset + indexQueue[i];
+      indicesOutputStart[indexOffset] = trueIndex;
     }
   };
 
-  template <typename T, typename IndexType, int Dim>
+  template <typename T, typename IndexType, int Dim, int J>
   void launch(
       at::cuda::detail::TensorInfo<const T, IndexType> input,
       IndexType inputSliceSize,
       IndexType k, // aka `k`
-      IndexType j,
       bool largest,
+      bool interleaved,
 
       IndexType numInputSlices,
       IndexType inputWithinSliceStride,
@@ -156,23 +173,20 @@ namespace approx_topk
     // There is then one thread per bucket. We group these into warps of 32, and put
     // each warp in its own block.
     // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
-    TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-    TORCH_CHECK(j <= MAX_QUEUE_SIZE, "topk j too big")
-    TORCH_CHECK(k == 0 || j > 0, "topk j must be > 0");
-    TORCH_CHECK(k == 0 || k % j == 0, "topk j must divide k");
     TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
-    IndexType numBuckets = k == 0 ? 1 : k / j;
+    TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
+    IndexType numBuckets = k == 0 ? 1 : k / J;
     int warp_size = at::cuda::warp_size();
     IndexType blockY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
     dim3 grid(numInputSlices, blockY, 1);
     dim3 block(warp_size);
 
-    priorityQueueTopK<T, IndexType, Dim><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+    priorityQueueTopK<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
         input,
         inputSliceSize,
         k,
-        j,
         largest,
+        interleaved,
         numInputSlices,
         inputWithinSliceStride,
         topK,
@@ -184,7 +198,7 @@ namespace approx_topk
 
   void launch_priority_queue_topk_kernel(
       const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
-      const Tensor &values, const Tensor &indices)
+      bool interleaved, const Tensor &values, const Tensor &indices)
   {
     TensorArg input_arg{self, "xs", 1}, topK_arg{values, "valuesOutput", 2},
         indices_arg{indices, "indicesOutput", 3};
@@ -195,22 +209,55 @@ namespace approx_topk
     TORCH_CHECK(numDims <= MAX_DIMS, "input tensor has too many dimensions");
     int64_t sliceSize = self.dim() == 0 ? 1 : self.size(dim);
 
+    TORCH_CHECK(k == 0 || k % j == 0, "topk j must divide k");
+    TORCH_CHECK(k == 0 || j > 0, "topk j must be > 0")
+    if (k == 0 && j == 0)
+    {
+      // This is valid but no work needs to be done. It's better to early exit than
+      // instantiate another template for J=0 for this no-op configuration.
+      return;
+    }
+
     auto input = self.contiguous();
     // static_cast is required to ensure that the correct type (INDEX_T)
     // is provided to the kernel for the arguments.
-#define RUN_K(INDEX_T, DIM)                                      \
-  launch<scalar_t, INDEX_T, DIM>(                                \
+#define RUN_J(INDEX_T, DIM, J)                                   \
+  launch<scalar_t, INDEX_T, DIM, J>(                             \
       inputInfo,                                                 \
       static_cast<INDEX_T>(sliceSize),                           \
       static_cast<INDEX_T>(k),                                   \
-      static_cast<INDEX_T>(j),                                   \
       largest,                                                   \
+      interleaved,                                               \
       static_cast<INDEX_T>(numInputSlices),                      \
       static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]), \
       topKInfo,                                                  \
       static_cast<INDEX_T>(topKInfo.strides[collapseTopKDim]),   \
       indicesInfo,                                               \
       static_cast<INDEX_T>(indicesInfo.strides[collapseIndicesDim]));
+
+    // J has to be a statically known template parameter so that the priorty queue can
+    // be kept in registers rather than local memory.
+#define RUN_K(INDEX_T, DIM)              \
+  if (j == 1)                            \
+  {                                      \
+    RUN_J(INDEX_T, DIM, 1);              \
+  }                                      \
+  else if (j == 2)                       \
+  {                                      \
+    RUN_J(INDEX_T, DIM, 2);              \
+  }                                      \
+  else if (j == 3)                       \
+  {                                      \
+    RUN_J(INDEX_T, DIM, 3);              \
+  }                                      \
+  else if (j == 4)                       \
+  {                                      \
+    RUN_J(INDEX_T, DIM, 4);              \
+  }                                      \
+  else                                   \
+  {                                      \
+    TORCH_CHECK(false, "j must be < 5"); \
+  }
 
 #define RUN_DIM(INDEX_T) \
   if (allDims == 1)      \

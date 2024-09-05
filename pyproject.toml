@@ -6,8 +6,8 @@ authors = ["Oscar Key <oscar.t.key@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
-torch = {version = "^2.4.0"}
+python = "^3.11"
+torch = { version = "^2.4.0" }
 setuptools = "^72.1.0"
 
 [tool.poetry.group.dev.dependencies]
