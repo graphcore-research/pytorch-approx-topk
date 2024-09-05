@@ -5,14 +5,18 @@ from torch.nn.functional import pad
 from approx_topk import TopK
 
 
-def bucket(exact_method: TopK, k_per_bucket: int, interleaved: bool) -> TopK:
+def bucket(
+    exact_method: TopK, l_multiplier: int, k_per_bucket: int, interleaved: bool
+) -> TopK:
     """Construct an approximate, parallelised top k by bucketing an exact method.
 
     The resulting method is quite slow because of launching additional kernels.
     """
 
     def bucketed(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
-        if k % k_per_bucket != 0:
+        l = k * l_multiplier
+
+        if l % k_per_bucket != 0:
             raise NotImplementedError
 
         dim = dim % xs.ndim
@@ -21,7 +25,7 @@ def bucket(exact_method: TopK, k_per_bucket: int, interleaved: bool) -> TopK:
             return values.movedim(-1, dim), indices.movedim(-1, dim)
 
         n = xs.size(-1)
-        n_buckets = k // k_per_bucket
+        n_buckets = l // k_per_bucket
 
         n_pad = -n % n_buckets
         pad_value = (
@@ -30,9 +34,10 @@ def bucket(exact_method: TopK, k_per_bucket: int, interleaved: bool) -> TopK:
             else torch.iinfo(xs.dtype).min
         )
 
+        # Find approximate top l elements using bucketed top-k algorithm
         if interleaved:
             xs_pad = pad(xs, pad=(0, n_pad), value=pad_value)
-            values, indices = exact_method(
+            val0, idx0 = exact_method(
                 xs_pad.unflatten(-1, (-1, n_buckets)).transpose(-1, -2),
                 k=k_per_bucket,
                 dim=-1,
@@ -40,7 +45,7 @@ def bucket(exact_method: TopK, k_per_bucket: int, interleaved: bool) -> TopK:
             idx_offset = torch.arange(
                 0, n_buckets, dtype=torch.int64, device=xs.device
             ).unsqueeze(-1)
-            indices.mul_(n_buckets).add_(idx_offset)
+            idx0.mul_(n_buckets).add_(idx_offset)
         else:
             xs_pad_b = torch.empty(
                 size=(*xs.shape[:-1], n + n_pad),
@@ -57,10 +62,13 @@ def bucket(exact_method: TopK, k_per_bucket: int, interleaved: bool) -> TopK:
             xs_pad_b[mask] = xs.flatten()
             xs_pad_b[~mask] = pad_value
 
-            values, indices = exact_method(xs_pad_b, k=k_per_bucket, dim=-1)
+            val0, idx0 = exact_method(xs_pad_b, k=k_per_bucket, dim=-1)
             idx_offset = mask.sum(dim=-1, keepdim=True).cumsum(dim=-2)
-            indices[..., 1:, :].add_(idx_offset[..., :-1, :])
+            idx0[..., 1:, :].add_(idx_offset[..., :-1, :])
 
-        return values.flatten(-2), indices.flatten(-2)
+        # Find exact top k elements out of the approximate top l elements
+        val, idx1 = torch.topk(val0.flatten(-2), k=k, dim=-1, sorted=False)
+
+        return val, idx0.flatten(-2).gather(-1, idx1)
 
     return bucketed
