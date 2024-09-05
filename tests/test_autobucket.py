@@ -6,14 +6,15 @@ from approx_topk.autobucket import bucket
 
 
 def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:
-    bucketed_topk = bucket(torch_default.topk, k_per_bucket=12)
+    bucketed_topk = bucket(torch_default.topk, k_per_bucket=12, interleaved=True)
     xs = torch.randn(1024)
     with pytest.raises(NotImplementedError):
         bucketed_topk(xs, 13, dim=0)
 
 
+# NOTE: Old test, only works for interleaved=False
 def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> None:
-    bucketed_topk = bucket(torch_default.topk, k_per_bucket=2)
+    bucketed_topk = bucket(torch_default.topk, k_per_bucket=2, interleaved=False)
     k = 8
     # Make sure input size is not divisible by number of buckets (in this case 4) to
     # test padding code.
@@ -43,9 +44,10 @@ def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> No
     assert torch.allclose(indices.sort().values, expected_indices.sort().values)
 
 
-def test__bucket__only_one_bucket__equal_to_exact_top_k() -> None:
+@pytest.mark.parametrize("interleaved", [True, False])
+def test__bucket__only_one_bucket__equal_to_exact_top_k(interleaved) -> None:
     k = 128
-    bucketed_topk = bucket(torch_default.topk, k_per_bucket=k)
+    bucketed_topk = bucket(torch_default.topk, k_per_bucket=k, interleaved=interleaved)
     xs = torch.randn(1024)
 
     values, indices = bucketed_topk(xs, k, dim=0)
@@ -55,8 +57,9 @@ def test__bucket__only_one_bucket__equal_to_exact_top_k() -> None:
     assert torch.allclose(indices.sort().values, expected_indices.sort().values)
 
 
-def test__bucket__one_k_per_bucket__does_not_crash() -> None:
-    bucketed_topk = bucket(torch_default.topk, k_per_bucket=1)
+@pytest.mark.parametrize("interleaved", [True, False])
+def test__bucket__one_k_per_bucket__does_not_crash(interleaved) -> None:
+    bucketed_topk = bucket(torch_default.topk, k_per_bucket=1, interleaved=interleaved)
     xs = torch.randn(32, 1000)
 
     values, indices = bucketed_topk(xs, k=16, dim=-1)
