@@ -64,15 +64,9 @@ def test__bucket__only_one_bucket__equal_to_exact_top_k(interleaved) -> None:
     assert_close_up_to_permutation(indices, expected_indices)
 
 
-@pytest.mark.parametrize(
-    "interleaved, l_multiplier, k_per_bucket",
-    [
-        (interleaved, l_multiplier, k_per_bucket)
-        for interleaved in [True, False]
-        for l_multiplier in [1, 2, 4]
-        for k_per_bucket in [1, 2, 4]
-    ],
-)
+@pytest.mark.parametrize("interleaved", [True, False])
+@pytest.mark.parametrize("l_multiplier", [1, 2, 4])
+@pytest.mark.parametrize("k_per_bucket", [1, 2, 4])
 def test__bucket__one_k_per_bucket__does_not_crash(
     interleaved, l_multiplier, k_per_bucket
 ) -> None:
