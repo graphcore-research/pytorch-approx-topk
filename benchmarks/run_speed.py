@@ -1,5 +1,6 @@
 """Compares the time taken by different topk methods."""
 
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import torch
 from torch.cuda import Event
 from tqdm import tqdm
 
-from approx_topk import Topk, radix_select, torch_default
+from approx_topk import Topk, priority_queue, torch_default
 
 
 def run_config(
@@ -37,12 +38,12 @@ def run_config(
     return torch.mean(ds).item(), torch.std(ds).item()
 
 
-methods = {
-    "radix whole sequence": radix_select.topk,
+methods: dict[str, Topk] = {
+    "priority queue j=4": partial(priority_queue.topk, j=4),
     "torch default": torch_default.topk,
 }
 batch_sizes = [32]
-topk_sizes = list(range(1_000, 20_000, 1_000))
+topk_sizes = list(range(1024, 21_000, 1024))
 
 for method_name, method in methods.items():
     for batch_size in batch_sizes:

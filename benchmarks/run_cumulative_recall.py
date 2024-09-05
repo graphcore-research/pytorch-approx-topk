@@ -12,8 +12,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
 
-from approx_topk import Topk, radix_select
-from approx_topk.autobucket import bucket
+from approx_topk import Topk, priority_queue
 
 n_repeats = 100
 n = 16 * 32 * 40
@@ -22,9 +21,9 @@ distributions = {
     "log normal": lambda: torch.randn(n_repeats, n).exp(),
 }
 k_ratios = [8, 16]
-methods = {"exact": radix_select.topk}
-for per_bucket in [1, 2, 4, 8, 16, 32]:
-    methods[f"{per_bucket} per bucket"] = partial(radix_select.topk, j=per_bucket)
+methods = {"exact": torch.topk}
+for per_bucket in [1, 2, 4]:
+    methods[f"{per_bucket} per bucket"] = partial(priority_queue.topk, j=per_bucket)
 
 
 def compute_cumulative_recall(
