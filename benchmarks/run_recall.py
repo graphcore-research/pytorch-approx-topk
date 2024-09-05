@@ -9,7 +9,7 @@ import torch
 from matplotlib.axes import Axes
 from torch import Tensor
 
-from approx_topk import TopK, radix_select
+from approx_topk import Topk, radix_select
 
 n_repeats = 100
 n = 16 * 32 * 40
@@ -23,7 +23,7 @@ for per_bucket in [1, 2, 4, 8, 16, 32]:
 
 
 def compute_recall(
-    distribution: Callable[[], Tensor], method: TopK, k: int
+    distribution: Callable[[], Tensor], method: Topk, k: int
 ) -> tuple[float, float]:
     xs = distribution().cuda()
     true_top, _ = torch.topk(xs, k, dim=-1, sorted=True)
@@ -35,7 +35,7 @@ def compute_recall(
 
 
 def plot_recalls(
-    distribution: Callable[[], Tensor], method: TopK, ax: list[Axes], **plot_kwargs
+    distribution: Callable[[], Tensor], method: Topk, ax: list[Axes], **plot_kwargs
 ) -> None:
     ks = list(range(1024, n, 128))
     top_50_recall, top_k_recall = zip(

@@ -35,5 +35,5 @@ def topk(
     indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
-    impl.topk(xs, k, j, dim, largest, interleaved, values, indices)
+    impl.priority_queue_topk(xs, k, j, dim, largest, interleaved, values, indices)
     return values, indices

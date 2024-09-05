@@ -7,11 +7,11 @@ import torch
 from torch.cuda import Event
 from tqdm import tqdm
 
-from approx_topk import TopK, radix_select, torch_default
+from approx_topk import Topk, radix_select, torch_default
 
 
 def run_config(
-    method: TopK, batch_size: int, topk_size: int, k: int
+    method: Topk, batch_size: int, topk_size: int, k: int
 ) -> tuple[float, float]:
     n_seqs = 50
     n_repeats = 20

@@ -10,7 +10,7 @@ import tqdm
 from torch import Tensor
 from torch.cuda import Event
 
-from approx_topk import TopK, bucket_argmax, radix_select, torch_default
+from approx_topk import Topk, bucket_argmax, radix_select, torch_default
 
 
 def benchmark_gpu(
@@ -65,7 +65,7 @@ def benchmark_gpu(
 
 @dataclass
 class Experiment:
-    method: TopK
+    method: Topk
     args: dict[str, Any]
     compile: Optional[str]
     cuda_graphs: bool

@@ -19,184 +19,187 @@ namespace approx_topk
   using namespace at;
   using namespace at::native;
 
-  template <typename T>
-  struct AddOp
+  namespace
   {
-    __device__ __forceinline__ T operator()(T const &lhs, T const &rhs)
+    template <typename T>
+    struct AddOp
     {
-      return (lhs + rhs);
-    }
-  };
-
-  template <typename T, typename IndexType, int J>
-  __device__ void insertIntoQueues(
-      T v, IndexType index,
-      T *valueQueue, IndexType *indexQueue,
-      bool largest)
-  {
-    // The smallest (or largest) item is at the start of the queue. We walk down the
-    // queue inserting the new item (if possible), and shifting the existing, smaller,
-    // items towards the front of the queue.
-#pragma unroll
-    for (IndexType i = 0; i < J; i++)
-    {
-      if ((largest && valueQueue[i] > v) || (!largest && valueQueue[i] < v))
-        break;
-      if (i > 0)
+      __device__ __forceinline__ T operator()(T const &lhs, T const &rhs)
       {
-        valueQueue[i - 1] = valueQueue[i];
-        indexQueue[i - 1] = indexQueue[i];
+        return (lhs + rhs);
       }
-      valueQueue[i] = v;
-      indexQueue[i] = index;
-    }
-  }
+    };
 
-  template <typename T, typename IndexType, int Dim, int J>
-  __global__ void priorityQueueTopK(
-      at::cuda::detail::TensorInfo<const T, IndexType> input,
-      IndexType inputSliceSize,
-      IndexType k, // aka `k`
-      bool largest,
-      bool interleaved,
-
-      IndexType numInputSlices,
-      IndexType inputWithinSliceStride,
-
-      at::cuda::detail::TensorInfo<T, IndexType> topK,
-      IndexType topKWithinSliceStride,
-
-      at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
-      IndexType indicesWithinSliceStride)
-  {
-    IndexType sliceIndex = blockIdx.x;
-    IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
-    IndexType numBuckets = k == 0 ? 1 : k / J;
-    if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
+    template <typename T, typename IndexType, int J>
+    __device__ void insertIntoQueues(
+        T v, IndexType index,
+        T *valueQueue, IndexType *indexQueue,
+        bool largest)
     {
-      return;
-    }
-
-    IndexType outputBucketSize = k / numBuckets;
-    // If the number of buckets divides the input slice size then we just equally divide
-    // the input slice between the buckets.
-    // If the number of buckets does not exactly divide the slice size then we round the
-    // bucket size down leaving some remainder, r, of the slice. In order to cover the
-    // remainder, we increase the size of the first r buckets by one.
-    IndexType baseInputBucketSize = inputSliceSize / numBuckets;
-    IndexType remainder = inputSliceSize - baseInputBucketSize * numBuckets;
-    IndexType inputBucketSize = baseInputBucketSize;
-    if (bucketIndex < remainder)
-    {
-      inputBucketSize += 1;
-    }
-
-    IndexType previousBigBuckets = min(bucketIndex, remainder);
-    IndexType previousNormalBuckets =
-        bucketIndex > remainder ? bucketIndex - remainder : 0;
-    IndexType inputBucketOffset =
-        previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
-    IndexType inputStartIndex =
-        at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
-    if (interleaved)
-    {
-      inputStartIndex += bucketIndex;
-      inputWithinSliceStride *= numBuckets;
-    }
-    else
-    {
-      inputStartIndex += inputBucketOffset;
-    }
-
-    const T *inputStart = &input.data[inputStartIndex];
-
-    T valueQueue[J];
-    IndexType indexQueue[J];
+      // The smallest (or largest) item is at the start of the queue. We walk down the
+      // queue inserting the new item (if possible), and shifting the existing, smaller,
+      // items towards the front of the queue.
 #pragma unroll
-    for (IndexType i = 0; i < J; i++)
-    {
-      if (largest)
-        valueQueue[i] = std::numeric_limits<T>::lowest();
-      else
-        valueQueue[i] = std::numeric_limits<T>::max();
+      for (IndexType i = 0; i < J; i++)
+      {
+        if ((largest && valueQueue[i] > v) || (!largest && valueQueue[i] < v))
+          break;
+        if (i > 0)
+        {
+          valueQueue[i - 1] = valueQueue[i];
+          indexQueue[i - 1] = indexQueue[i];
+        }
+        valueQueue[i] = v;
+        indexQueue[i] = index;
+      }
     }
 
-    for (IndexType i = 0; i < inputBucketSize; i++)
+    template <typename T, typename IndexType, int Dim, int J>
+    __global__ void priorityQueueTopk(
+        at::cuda::detail::TensorInfo<const T, IndexType> input,
+        IndexType inputSliceSize,
+        IndexType k, // aka `k`
+        bool largest,
+        bool interleaved,
+
+        IndexType numInputSlices,
+        IndexType inputWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<T, IndexType> topK,
+        IndexType topKWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
+        IndexType indicesWithinSliceStride)
     {
-      T v = doLdg(&inputStart[i * inputWithinSliceStride]);
-      insertIntoQueues<T, IndexType, J>(v, i, valueQueue, indexQueue, largest);
-    }
+      IndexType sliceIndex = blockIdx.x;
+      IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
+      IndexType numBuckets = k == 0 ? 1 : k / J;
+      if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
+      {
+        return;
+      }
 
-    IndexType valuesOutputStartIndex =
-        at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
-    IndexType indicesOutputStartIndex =
-        at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
-    valuesOutputStartIndex += bucketIndex * outputBucketSize;
-    indicesOutputStartIndex += bucketIndex * outputBucketSize;
-    T *valuesOutputStart = &topK.data[valuesOutputStartIndex];
-    int64_t *indicesOutputStart = &indices.data[indicesOutputStartIndex];
+      IndexType outputBucketSize = k / numBuckets;
+      // If the number of buckets divides the input slice size then we just equally
+      // divide the input slice between the buckets.
+      // If the number of buckets does not exactly divide the slice size then we round
+      // the bucket size down leaving some remainder, r, of the slice. In order to cover
+      // the remainder, we increase the size of the first r buckets by one.
+      IndexType baseInputBucketSize = inputSliceSize / numBuckets;
+      IndexType remainder = inputSliceSize - baseInputBucketSize * numBuckets;
+      IndexType inputBucketSize = baseInputBucketSize;
+      if (bucketIndex < remainder)
+      {
+        inputBucketSize += 1;
+      }
 
-#pragma unroll
-    for (IndexType i = 0; i < J; i++)
-    {
-      IndexType topKOffset = i * topKWithinSliceStride;
-      IndexType indexOffset = i * indicesWithinSliceStride;
-      valuesOutputStart[topKOffset] = valueQueue[i];
-
-      IndexType trueIndex;
+      IndexType previousBigBuckets = min(bucketIndex, remainder);
+      IndexType previousNormalBuckets =
+          bucketIndex > remainder ? bucketIndex - remainder : 0;
+      IndexType inputBucketOffset =
+          previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
+      IndexType inputStartIndex =
+          at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
       if (interleaved)
-        trueIndex = bucketIndex + indexQueue[i] * numBuckets;
+      {
+        inputStartIndex += bucketIndex;
+        inputWithinSliceStride *= numBuckets;
+      }
       else
-        trueIndex = inputBucketOffset + indexQueue[i];
-      indicesOutputStart[indexOffset] = trueIndex;
+      {
+        inputStartIndex += inputBucketOffset;
+      }
+
+      const T *inputStart = &input.data[inputStartIndex];
+
+      T valueQueue[J];
+      IndexType indexQueue[J];
+#pragma unroll
+      for (IndexType i = 0; i < J; i++)
+      {
+        if (largest)
+          valueQueue[i] = std::numeric_limits<T>::lowest();
+        else
+          valueQueue[i] = std::numeric_limits<T>::max();
+      }
+
+      for (IndexType i = 0; i < inputBucketSize; i++)
+      {
+        T v = doLdg(&inputStart[i * inputWithinSliceStride]);
+        insertIntoQueues<T, IndexType, J>(v, i, valueQueue, indexQueue, largest);
+      }
+
+      IndexType valuesOutputStartIndex =
+          at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
+      IndexType indicesOutputStartIndex =
+          at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
+      valuesOutputStartIndex += bucketIndex * outputBucketSize;
+      indicesOutputStartIndex += bucketIndex * outputBucketSize;
+      T *valuesOutputStart = &topK.data[valuesOutputStartIndex];
+      int64_t *indicesOutputStart = &indices.data[indicesOutputStartIndex];
+
+#pragma unroll
+      for (IndexType i = 0; i < J; i++)
+      {
+        IndexType topKOffset = i * topKWithinSliceStride;
+        IndexType indexOffset = i * indicesWithinSliceStride;
+        valuesOutputStart[topKOffset] = valueQueue[i];
+
+        IndexType trueIndex;
+        if (interleaved)
+          trueIndex = bucketIndex + indexQueue[i] * numBuckets;
+        else
+          trueIndex = inputBucketOffset + indexQueue[i];
+        indicesOutputStart[indexOffset] = trueIndex;
+      }
+    };
+
+    template <typename T, typename IndexType, int Dim, int J>
+    void launchKernel(
+        at::cuda::detail::TensorInfo<const T, IndexType> input,
+        IndexType inputSliceSize,
+        IndexType k, // aka `k`
+        bool largest,
+        bool interleaved,
+
+        IndexType numInputSlices,
+        IndexType inputWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<T, IndexType> topK,
+        IndexType topKWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
+        IndexType indicesWithinSliceStride)
+    {
+      // We use the x dimension of the grid for batches provided by the user.
+      // There is then one thread per bucket. We group these into warps of 32, and put
+      // each warp in its own block.
+      // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
+      TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
+      TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
+      IndexType numBuckets = k == 0 ? 1 : k / J;
+      int warp_size = at::cuda::warp_size();
+      IndexType blockY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
+      dim3 grid(numInputSlices, blockY, 1);
+      dim3 block(warp_size);
+
+      priorityQueueTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+          input,
+          inputSliceSize,
+          k,
+          largest,
+          interleaved,
+          numInputSlices,
+          inputWithinSliceStride,
+          topK,
+          topKWithinSliceStride,
+          indices,
+          indicesWithinSliceStride);
+      C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
-  };
-
-  template <typename T, typename IndexType, int Dim, int J>
-  void launch(
-      at::cuda::detail::TensorInfo<const T, IndexType> input,
-      IndexType inputSliceSize,
-      IndexType k, // aka `k`
-      bool largest,
-      bool interleaved,
-
-      IndexType numInputSlices,
-      IndexType inputWithinSliceStride,
-
-      at::cuda::detail::TensorInfo<T, IndexType> topK,
-      IndexType topKWithinSliceStride,
-
-      at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
-      IndexType indicesWithinSliceStride)
-  {
-    // We use the x dimension of the grid for batches provided by the user.
-    // There is then one thread per bucket. We group these into warps of 32, and put
-    // each warp in its own block.
-    // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
-    TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
-    TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-    IndexType numBuckets = k == 0 ? 1 : k / J;
-    int warp_size = at::cuda::warp_size();
-    IndexType blockY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
-    dim3 grid(numInputSlices, blockY, 1);
-    dim3 block(warp_size);
-
-    priorityQueueTopK<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
-        input,
-        inputSliceSize,
-        k,
-        largest,
-        interleaved,
-        numInputSlices,
-        inputWithinSliceStride,
-        topK,
-        topKWithinSliceStride,
-        indices,
-        indicesWithinSliceStride);
-    C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
 
-  void launch_priority_queue_topk_kernel(
+  void priority_queue_topk(
       const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
       bool interleaved, const Tensor &values, const Tensor &indices)
   {
@@ -222,7 +225,7 @@ namespace approx_topk
     // static_cast is required to ensure that the correct type (INDEX_T)
     // is provided to the kernel for the arguments.
 #define RUN_J(INDEX_T, DIM, J)                                   \
-  launch<scalar_t, INDEX_T, DIM, J>(                             \
+  launchKernel<scalar_t, INDEX_T, DIM, J>(                       \
       inputInfo,                                                 \
       static_cast<INDEX_T>(sliceSize),                           \
       static_cast<INDEX_T>(k),                                   \
@@ -347,11 +350,12 @@ namespace approx_topk
     }
 #undef RUN_T
 #undef RUN_DIM
+#undef RUN_K
   }
 
   PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
   {
-    m.def("topk", &launch_priority_queue_topk_kernel);
+    m.def("priority_queue_topk", &priority_queue_topk);
   }
 
 } // approx_topk

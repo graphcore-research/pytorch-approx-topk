@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
 
-from approx_topk import TopK, radix_select
+from approx_topk import Topk, radix_select
 from approx_topk.autobucket import bucket
 
 n_repeats = 100
@@ -28,7 +28,7 @@ for per_bucket in [1, 2, 4, 8, 16, 32]:
 
 
 def compute_cumulative_recall(
-    distribution: Callable[[], Tensor], k_ratio: int, method: TopK
+    distribution: Callable[[], Tensor], k_ratio: int, method: Topk
 ) -> tuple[list[int], list[float]]:
     assert n % k_ratio == 0
     k = n // k_ratio

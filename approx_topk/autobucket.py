@@ -2,12 +2,12 @@ import torch
 from torch import Tensor
 from torch.nn.functional import pad
 
-from approx_topk import TopK
+from approx_topk import Topk
 
 
 def bucket(
-    exact_method: TopK, k_mult: int, k_per_bucket: int, interleaved: bool
-) -> TopK:
+    exact_method: Topk, k_mult: int, k_per_bucket: int, interleaved: bool
+) -> Topk:
     """Construct an approximate, parallelised top k by bucketing an exact method.
 
     The resulting method is quite slow because of launching additional kernels.
