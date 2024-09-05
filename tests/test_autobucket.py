@@ -1,13 +1,9 @@
 import pytest
 import torch
-from torch import Tensor
 
 from approx_topk import torch_default
 from approx_topk.autobucket import bucket
-
-
-def assert_close_up_to_permutation(x: Tensor, y: Tensor, dim: int = -1) -> None:
-    torch.testing.assert_close(x.sort(dim=dim)[0], y.sort(dim=dim)[0])
+from tests.helper_funcs import assert_close_up_to_permutation
 
 
 def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:

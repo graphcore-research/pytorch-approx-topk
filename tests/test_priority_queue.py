@@ -3,6 +3,8 @@ import torch
 from torch import Generator
 
 from approx_topk.priority_queue import topk
+from approx_topk.torch_default import bucket_topk
+from tests.helper_funcs import assert_close_up_to_permutation
 
 
 @pytest.mark.parametrize("k", [0, 2, 8])
@@ -122,6 +124,17 @@ def test__bucketed__topk_ideally_distributed__long_sequence__equal_to_exact() ->
     assert torch.allclose(
         indices.sort(dim=1).values, expected_indices.sort(dim=1).values
     )
+
+
+def test_against_reference_bucket_topk() -> None:
+    torch.manual_seed(100)
+    xs = torch.randn(5, 32, 512, device="cuda")
+    values, indices = topk(xs, k=64, dim=-1, j=1)
+    expected_values, expected_indices = bucket_topk(
+        xs, k=64, dim=-1, l_multiplier=1, k_per_bucket=1, interleaved=False
+    )
+    assert_close_up_to_permutation(values, expected_values)
+    assert_close_up_to_permutation(indices, expected_indices)
 
 
 def rng_kwargs(seed: int):
