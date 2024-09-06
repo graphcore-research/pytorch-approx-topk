@@ -8,7 +8,7 @@ from tests.helper_funcs import assert_close_up_to_permutation
 
 def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:
     bucketed_topk = bucket(
-        torch_default.topk, l_multiplier=1, k_per_bucket=12, interleaved=True
+        torch_default.topk, k_mult=1, k_per_bucket=12, interleaved=True
     )
     xs = torch.randn(1024)
     with pytest.raises(NotImplementedError):
@@ -18,7 +18,7 @@ def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:
 # NOTE: Only works for interleaved=False
 def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> None:
     bucketed_topk = bucket(
-        torch_default.topk, l_multiplier=1, k_per_bucket=2, interleaved=False
+        torch_default.topk, k_mult=1, k_per_bucket=2, interleaved=False
     )
     k = 8
     # Make sure input size is not divisible by number of buckets (in this case 4) to
@@ -53,7 +53,7 @@ def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> No
 def test__bucket__only_one_bucket__equal_to_exact_top_k(interleaved) -> None:
     k = 128
     bucketed_topk = bucket(
-        torch_default.topk, l_multiplier=1, k_per_bucket=k, interleaved=interleaved
+        torch_default.topk, k_mult=1, k_per_bucket=k, interleaved=interleaved
     )
     xs = torch.randn(1024)
 
@@ -65,14 +65,14 @@ def test__bucket__only_one_bucket__equal_to_exact_top_k(interleaved) -> None:
 
 
 @pytest.mark.parametrize("interleaved", [True, False])
-@pytest.mark.parametrize("l_multiplier", [1, 2, 4])
+@pytest.mark.parametrize("k_mult", [1, 2, 4])
 @pytest.mark.parametrize("k_per_bucket", [1, 2, 4])
 def test__bucket__one_k_per_bucket__does_not_crash(
-    interleaved, l_multiplier, k_per_bucket
+    interleaved, k_mult, k_per_bucket
 ) -> None:
     bucketed_topk = bucket(
         torch_default.topk,
-        l_multiplier=l_multiplier,
+        k_mult=k_mult,
         k_per_bucket=k_per_bucket,
         interleaved=interleaved,
     )
@@ -88,7 +88,7 @@ def test__bucket__one_k_per_bucket__does_not_crash(
 def test_bucket_non_interleaved() -> None:
     # b1 = {0, 1, 2, 3}, b2 = {4, 5, 6}, b3 = {7, 8, 9}
     xs = torch.arange(10)
-    topk = bucket(torch.topk, l_multiplier=1, k_per_bucket=1, interleaved=False)
+    topk = bucket(torch.topk, k_mult=1, k_per_bucket=1, interleaved=False)
     values, indices = topk(xs, k=3, dim=-1)
     expected = torch.tensor([3, 6, 9])
 
@@ -99,7 +99,7 @@ def test_bucket_non_interleaved() -> None:
 def test_bucket_interleaved() -> None:
     # b1 = {0, 3, 6, 9}, b2 = {1, 4, 7, PAD}, b3 = {2, 5, 8, PAD}
     xs = torch.arange(10)
-    topk = bucket(torch.topk, l_multiplier=1, k_per_bucket=1, interleaved=True)
+    topk = bucket(torch.topk, k_mult=1, k_per_bucket=1, interleaved=True)
     values, indices = topk(xs, k=3, dim=-1)
     expected = torch.tensor([9, 7, 8])
 
@@ -108,9 +108,9 @@ def test_bucket_interleaved() -> None:
 
 
 @pytest.mark.parametrize("interleaved", [True, False])
-def test_bucket_l_multiplier_not_one(interleaved) -> None:
+def test_bucket_k_mult_not_one(interleaved) -> None:
     xs = torch.arange(10)
-    topk = bucket(torch.topk, l_multiplier=2, k_per_bucket=1, interleaved=interleaved)
+    topk = bucket(torch.topk, k_mult=2, k_per_bucket=1, interleaved=interleaved)
     values, indices = topk(xs, k=3, dim=-1)
     expected = torch.tensor([9, 8, 7])
 

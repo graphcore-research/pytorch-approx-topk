@@ -6,7 +6,7 @@ from approx_topk import TopK
 
 
 def bucket(
-    exact_method: TopK, l_multiplier: int, k_per_bucket: int, interleaved: bool
+    exact_method: TopK, k_mult: int, k_per_bucket: int, interleaved: bool
 ) -> TopK:
     """Construct an approximate, parallelised top k by bucketing an exact method.
 
@@ -14,9 +14,9 @@ def bucket(
     """
 
     def bucketed(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
-        l = k * l_multiplier
+        k0 = k * k_mult  # used for initial bucket top-k
 
-        if l % k_per_bucket != 0:
+        if k0 % k_per_bucket != 0:
             raise NotImplementedError
 
         dim = dim % xs.ndim
@@ -25,7 +25,7 @@ def bucket(
             return values.movedim(-1, dim), indices.movedim(-1, dim)
 
         n = xs.size(-1)
-        n_buckets = l // k_per_bucket
+        n_buckets = k0 // k_per_bucket
 
         n_pad = -n % n_buckets
         pad_value = (

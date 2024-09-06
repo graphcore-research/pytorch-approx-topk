@@ -16,13 +16,13 @@ def bucket_topk(
     xs: Tensor,
     k: int,
     dim: int,
-    l_multiplier: int,
+    k_mult: int,
     k_per_bucket: int,
     interleaved: bool,
 ) -> tuple[Tensor, Tensor]:
     return bucket(
         topk,
-        l_multiplier=l_multiplier,
+        k_mult=k_mult,
         k_per_bucket=k_per_bucket,
         interleaved=interleaved,
     )(xs, k, dim)

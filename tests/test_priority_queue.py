@@ -186,7 +186,7 @@ def test_against_reference_bucket_topk(interleaved, k_per_bucket) -> None:
         xs,
         k=64,
         dim=-1,
-        l_multiplier=1,
+        k_mult=1,
         k_per_bucket=k_per_bucket,
         interleaved=interleaved,
     )
