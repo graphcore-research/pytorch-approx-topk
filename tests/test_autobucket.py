@@ -107,12 +107,21 @@ def test_bucket_interleaved() -> None:
     assert_close_up_to_permutation(indices, expected)
 
 
-@pytest.mark.parametrize("interleaved", [True, False])
-def test_bucket_k_mult_not_one(interleaved) -> None:
-    xs = torch.arange(10)
-    topk = bucket(torch.topk, k_mult=2, k_per_bucket=1, interleaved=interleaved)
-    values, indices = topk(xs, k=3, dim=-1)
-    expected = torch.tensor([9, 8, 7])
+def test_bucket_k_mult_not_one() -> None:
+    xs = torch.arange(16)
+    topk = bucket(torch.topk, k_mult=2, k_per_bucket=1, interleaved=False)
+    values, indices = topk(xs, k=4, dim=-1)
+    expected = torch.tensor([15, 13, 11, 9])
+
+    assert_close_up_to_permutation(values, expected)
+    assert_close_up_to_permutation(indices, expected)
+
+
+def test_bucket_k_mult_not_one_interleaved() -> None:
+    xs = torch.arange(16)
+    topk = bucket(torch.topk, k_mult=2, k_per_bucket=1, interleaved=True)
+    values, indices = topk(xs, k=4, dim=-1)
+    expected = torch.tensor([15, 14, 13, 12])
 
     assert_close_up_to_permutation(values, expected)
     assert_close_up_to_permutation(indices, expected)
