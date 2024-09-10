@@ -43,7 +43,7 @@ class cost_basic(cost):
 class cost_serial(cost):
     @staticmethod
     def insertion(*, k: int, n: int, m: int) -> int:
-        return m * n * (4*k - 2)
+        return m * n * (3*k - 1)
 
     @staticmethod
     def radix(*, k: int, n: int, m: int) -> int:
@@ -57,7 +57,7 @@ class cost_serial(cost):
 class cost_parallel(cost):
     @staticmethod
     def scan(*, k: int, n: int, m: int) -> int:
-        return k * (2*log2(n) + 2)
+        return k * (2*log2(n) + 3)
 
     @staticmethod
     def radix(*, k: int, n: int, m: int) -> int:
