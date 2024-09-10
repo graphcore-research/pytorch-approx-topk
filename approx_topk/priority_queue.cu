@@ -217,7 +217,6 @@ namespace approx_topk
     if (k == 0)
       return;
     TORCH_CHECK(k % j == 0, "topk j must divide k");
-    TORCH_CHECK(j > 0, "topk j must be > 0")
 
     auto input = self.contiguous();
     // static_cast is required to ensure that the correct type (INDEX_T)
@@ -238,26 +237,26 @@ namespace approx_topk
 
     // J has to be a statically known template parameter so that the priorty queue can
     // be kept in registers rather than local memory.
-#define RUN_K(INDEX_T, DIM)              \
-  if (j == 1)                            \
-  {                                      \
-    RUN_J(INDEX_T, DIM, 1);              \
-  }                                      \
-  else if (j == 2)                       \
-  {                                      \
-    RUN_J(INDEX_T, DIM, 2);              \
-  }                                      \
-  else if (j == 3)                       \
-  {                                      \
-    RUN_J(INDEX_T, DIM, 3);              \
-  }                                      \
-  else if (j == 4)                       \
-  {                                      \
-    RUN_J(INDEX_T, DIM, 4);              \
-  }                                      \
-  else                                   \
-  {                                      \
-    TORCH_CHECK(false, "j must be < 5"); \
+#define RUN_K(INDEX_T, DIM)                      \
+  if (j == 1)                                    \
+  {                                              \
+    RUN_J(INDEX_T, DIM, 1);                      \
+  }                                              \
+  else if (j == 2)                               \
+  {                                              \
+    RUN_J(INDEX_T, DIM, 2);                      \
+  }                                              \
+  else if (j == 3)                               \
+  {                                              \
+    RUN_J(INDEX_T, DIM, 3);                      \
+  }                                              \
+  else if (j == 4)                               \
+  {                                              \
+    RUN_J(INDEX_T, DIM, 4);                      \
+  }                                              \
+  else                                           \
+  {                                              \
+    TORCH_CHECK(false, "topk j must 0 < j < 5"); \
   }
 
 #define RUN_DIM(INDEX_T) \
