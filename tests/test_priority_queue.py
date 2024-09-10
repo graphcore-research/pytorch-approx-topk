@@ -83,6 +83,23 @@ def test__bucketed__batched__bucket_size_one__equal_to_exact(
     assert torch.allclose(indices.sort(dim).values, expected_indices.sort(dim).values)
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("interleaved", [False, True])
+def test__bucketed__batched__k_mult_means_bucket_size_one__equal_to_exact(
+    dtype, interleaved: bool
+) -> None:
+    xs = torch.randn((32, 1024), dtype=dtype, **rng_kwargs(23))
+    dim = -1
+    k = 64
+    # Setting k_mult=16 should mean we end up with 1024 buckets, so bucket size 1.
+    values, indices = topk(xs, k, dim, k_mult=16, j=1, interleaved=interleaved)
+
+    expected_values, expected_indices = torch.topk(xs, k, dim)
+
+    assert torch.allclose(values.sort(dim).values, expected_values.sort(dim).values)
+    assert torch.allclose(indices.sort(dim).values, expected_indices.sort(dim).values)
+
+
 def test__bucketed__not_interleaved__topk_ideally_distributed__equal_to_exact() -> None:
     # We set up 4 buckets for a sequence length of 17:
     # [0 1 2 3 4] [5 6 7 8] [9 10 11 12] [13 14 15 16]
