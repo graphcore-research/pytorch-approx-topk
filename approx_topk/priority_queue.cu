@@ -58,7 +58,7 @@ namespace approx_topk
     __global__ void priorityQueueTopk(
         at::cuda::detail::TensorInfo<const T, IndexType> input,
         IndexType inputSliceSize,
-        IndexType k, // aka `k`
+        IndexType k,
         bool largest,
         bool interleaved,
 
@@ -73,7 +73,7 @@ namespace approx_topk
     {
       IndexType sliceIndex = blockIdx.x;
       IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
-      IndexType numBuckets = k == 0 ? 1 : k / J;
+      IndexType numBuckets = k / J;
       if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
       {
         return;
@@ -158,7 +158,7 @@ namespace approx_topk
     void launchKernel(
         at::cuda::detail::TensorInfo<const T, IndexType> input,
         IndexType inputSliceSize,
-        IndexType k, // aka `k`
+        IndexType k,
         bool largest,
         bool interleaved,
 
@@ -177,7 +177,7 @@ namespace approx_topk
       // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
       TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
       TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-      IndexType numBuckets = k == 0 ? 1 : k / J;
+      IndexType numBuckets = k / J;
       int warp_size = at::cuda::warp_size();
       IndexType blockY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
       dim3 grid(numInputSlices, blockY, 1);
@@ -212,14 +212,12 @@ namespace approx_topk
     TORCH_CHECK(numDims <= MAX_DIMS, "input tensor has too many dimensions");
     int64_t sliceSize = self.dim() == 0 ? 1 : self.size(dim);
 
-    TORCH_CHECK(k == 0 || k % j == 0, "topk j must divide k");
-    TORCH_CHECK(k == 0 || j > 0, "topk j must be > 0")
-    if (k == 0 && j == 0)
-    {
-      // This is valid but no work needs to be done. It's better to early exit than
-      // instantiate another template for J=0 for this no-op configuration.
+    // k=0 is valid but no work needs to be done, so exit early to simplify the rest
+    // of the implementation.
+    if (k == 0)
       return;
-    }
+    TORCH_CHECK(k % j == 0, "topk j must divide k");
+    TORCH_CHECK(j > 0, "topk j must be > 0")
 
     auto input = self.contiguous();
     // static_cast is required to ensure that the correct type (INDEX_T)
