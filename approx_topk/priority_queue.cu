@@ -9,6 +9,7 @@
 #include <ATen/cuda/DeviceUtils.cuh>
 #include <ATen/native/cuda/SortingCommon.cuh>
 #include <limits>
+#include <tuple>
 
 #include <torch/extension.h>
 
@@ -21,14 +22,39 @@ namespace approx_topk
 
   namespace
   {
-    template <typename T>
-    struct AddOp
+
+    template <typename IndexType>
+    __device__ std::tuple<IndexType, IndexType, IndexType> calculateBucket(
+        IndexType bucketId, IndexType inputSliceSize, IndexType numBuckets,
+        bool interleaved)
     {
-      __device__ __forceinline__ T operator()(T const &lhs, T const &rhs)
+      // If the number of buckets divides the input slice size then we just equally
+      // divide the input slice between the buckets.
+      // If the number of buckets does not exactly divide the slice size then we round
+      // the bucket size down leaving some remainder, r, of the slice. In order to cover
+      // the remainder, we increase the size of the first r buckets by one.
+      auto baseInputBucketSize = inputSliceSize / numBuckets;
+      auto remainder = inputSliceSize - baseInputBucketSize * numBuckets;
+      auto inputBucketSize = baseInputBucketSize;
+      if (bucketId < remainder)
+        inputBucketSize += 1;
+
+      IndexType inputStartIndex, inputIndexStride;
+      if (interleaved)
       {
-        return (lhs + rhs);
+        inputStartIndex = bucketId;
+        inputIndexStride = numBuckets;
       }
-    };
+      else
+      {
+        auto previousBigBuckets = min(bucketId, remainder);
+        auto previousNormalBuckets = bucketId > remainder ? bucketId - remainder : 0;
+        inputStartIndex =
+            previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
+        inputIndexStride = 1;
+      }
+      return {inputBucketSize, inputStartIndex, inputIndexStride};
+    }
 
     template <typename T, typename IndexType, int J>
     __device__ void insertIntoQueues(
@@ -55,6 +81,60 @@ namespace approx_topk
     }
 
     template <typename T, typename IndexType, int Dim, int J>
+    __device__ void findJLargest(
+        at::cuda::detail::TensorInfo<const T, IndexType> input, IndexType sliceIndex,
+        IndexType offset, IndexType length, IndexType stride, bool largest,
+        T *values, IndexType *indices)
+    {
+      offset +=
+          at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
+      const T *inputStart = &input.data[offset];
+
+#pragma unroll
+      for (IndexType i = 0; i < J; i++)
+      {
+        if (largest)
+          values[i] = std::numeric_limits<T>::lowest();
+        else
+          indices[i] = std::numeric_limits<T>::max();
+      }
+
+      for (IndexType i = 0; i < length; i++)
+      {
+        T v = doLdg(&inputStart[i * stride]);
+        insertIntoQueues<T, IndexType, J>(v, i, values, indices, largest);
+      }
+    }
+
+    template <typename T, typename IndexType, int Dim, int J>
+    __device__ void writeOutputs(
+        T *largestValues, IndexType *largestIndices,
+        IndexType sliceIndex, IndexType offset,
+        IndexType indexCorrectionOffset, IndexType indexCorrectionStride,
+
+        at::cuda::detail::TensorInfo<T, IndexType> topK,
+        IndexType topKWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
+        IndexType indicesWithinSliceStride)
+    {
+      IndexType valuesOffset =
+          offset + at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
+      IndexType indicesOffset =
+          offset + at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
+      T *valuesOutputStart = &topK.data[valuesOffset];
+      int64_t *indicesOutputStart = &indices.data[indicesOffset];
+
+#pragma unroll
+      for (IndexType i = 0; i < J; i++)
+      {
+        valuesOutputStart[i * topKWithinSliceStride] = largestValues[i];
+        indicesOutputStart[i * indicesWithinSliceStride] =
+            indexCorrectionOffset + largestIndices[i] * indexCorrectionStride;
+      }
+    }
+
+    template <typename T, typename IndexType, int Dim, int J>
     __global__ void priorityQueueTopk(
         at::cuda::detail::TensorInfo<const T, IndexType> input,
         IndexType inputSliceSize,
@@ -72,87 +152,30 @@ namespace approx_topk
         IndexType indicesWithinSliceStride)
     {
       IndexType sliceIndex = blockIdx.x;
-      IndexType bucketIndex = blockIdx.y * 32 + threadIdx.x;
+      IndexType bucketId = blockIdx.y * 32 + threadIdx.x;
       IndexType numBuckets = k / J;
-      if (sliceIndex >= numInputSlices || bucketIndex >= numBuckets)
-      {
+      if (sliceIndex >= numInputSlices || bucketId >= numBuckets)
         return;
-      }
+
+      auto [inputBucketSize, inputStartIndex, inputIndexStride] =
+          calculateBucket(bucketId, inputSliceSize, numBuckets, interleaved);
+      IndexType inputStride = inputWithinSliceStride * inputIndexStride;
+
+      IndexType inputOffset = inputStartIndex * inputWithinSliceStride;
+      T largestValues[J];
+      IndexType largestIndices[J];
+      findJLargest<T, IndexType, Dim, J>(
+          input, sliceIndex, inputOffset, inputBucketSize, inputStride, largest,
+          largestValues, largestIndices);
 
       IndexType outputBucketSize = k / numBuckets;
-      // If the number of buckets divides the input slice size then we just equally
-      // divide the input slice between the buckets.
-      // If the number of buckets does not exactly divide the slice size then we round
-      // the bucket size down leaving some remainder, r, of the slice. In order to cover
-      // the remainder, we increase the size of the first r buckets by one.
-      IndexType baseInputBucketSize = inputSliceSize / numBuckets;
-      IndexType remainder = inputSliceSize - baseInputBucketSize * numBuckets;
-      IndexType inputBucketSize = baseInputBucketSize;
-      if (bucketIndex < remainder)
-      {
-        inputBucketSize += 1;
-      }
-
-      IndexType previousBigBuckets = min(bucketIndex, remainder);
-      IndexType previousNormalBuckets =
-          bucketIndex > remainder ? bucketIndex - remainder : 0;
-      IndexType inputBucketOffset =
-          previousBigBuckets * (baseInputBucketSize + 1) + previousNormalBuckets * baseInputBucketSize;
-      IndexType inputStartIndex =
-          at::cuda::detail::IndexToOffset<const T, IndexType, Dim>::get(sliceIndex, input);
-      if (interleaved)
-      {
-        inputStartIndex += bucketIndex;
-        inputWithinSliceStride *= numBuckets;
-      }
-      else
-      {
-        inputStartIndex += inputBucketOffset;
-      }
-
-      const T *inputStart = &input.data[inputStartIndex];
-
-      T valueQueue[J];
-      IndexType indexQueue[J];
-#pragma unroll
-      for (IndexType i = 0; i < J; i++)
-      {
-        if (largest)
-          valueQueue[i] = std::numeric_limits<T>::lowest();
-        else
-          valueQueue[i] = std::numeric_limits<T>::max();
-      }
-
-      for (IndexType i = 0; i < inputBucketSize; i++)
-      {
-        T v = doLdg(&inputStart[i * inputWithinSliceStride]);
-        insertIntoQueues<T, IndexType, J>(v, i, valueQueue, indexQueue, largest);
-      }
-
-      IndexType valuesOutputStartIndex =
-          at::cuda::detail::IndexToOffset<T, IndexType, Dim>::get(sliceIndex, topK);
-      IndexType indicesOutputStartIndex =
-          at::cuda::detail::IndexToOffset<int64_t, IndexType, Dim>::get(sliceIndex, indices);
-      valuesOutputStartIndex += bucketIndex * outputBucketSize;
-      indicesOutputStartIndex += bucketIndex * outputBucketSize;
-      T *valuesOutputStart = &topK.data[valuesOutputStartIndex];
-      int64_t *indicesOutputStart = &indices.data[indicesOutputStartIndex];
-
-#pragma unroll
-      for (IndexType i = 0; i < J; i++)
-      {
-        IndexType topKOffset = i * topKWithinSliceStride;
-        IndexType indexOffset = i * indicesWithinSliceStride;
-        valuesOutputStart[topKOffset] = valueQueue[i];
-
-        IndexType trueIndex;
-        if (interleaved)
-          trueIndex = bucketIndex + indexQueue[i] * numBuckets;
-        else
-          trueIndex = inputBucketOffset + indexQueue[i];
-        indicesOutputStart[indexOffset] = trueIndex;
-      }
-    };
+      IndexType outputOffset = bucketId * outputBucketSize;
+      writeOutputs<T, IndexType, Dim, J>(
+          largestValues, largestIndices,
+          sliceIndex, outputOffset,
+          inputStartIndex, inputIndexStride,
+          topK, topKWithinSliceStride, indices, indicesWithinSliceStride);
+    }
 
     template <typename T, typename IndexType, int Dim, int J>
     void launchKernel(
