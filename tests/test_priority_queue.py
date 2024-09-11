@@ -10,11 +10,14 @@ from tests.helper_funcs import assert_close_up_to_permutation
 @pytest.mark.parametrize("k", [0, 2, 4])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [False, True])
 def test__one_bucket__no_batch__equal_to_built_in(
-    k: int, dtype, interleaved: bool
+    k: int, dtype, interleaved: bool, multithread_buckets: bool
 ) -> None:
     xs = torch.randn(1001, dtype=dtype, **rng_kwargs(234))
-    values, indices = topk(xs, k, dim=0, interleaved=interleaved)
+    values, indices = topk(
+        xs, k, dim=0, interleaved=interleaved, multithread_buckets=multithread_buckets
+    )
 
     expected_values, expected_indices = torch.topk(xs, k, dim=0)
 
@@ -26,11 +29,14 @@ def test__one_bucket__no_batch__equal_to_built_in(
 @pytest.mark.parametrize("dim", [0, 1, 2])
 @pytest.mark.parametrize("dtype", [torch.float32])
 @pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [False, True])
 def test__one_bucket__batched__equal_to_built_in(
-    k: int, dim: int, dtype, interleaved: bool
+    k: int, dim: int, dtype, interleaved: bool, multithread_buckets: bool
 ) -> None:
     xs = torch.rand((30, 25, 16), dtype=dtype, **rng_kwargs(4242))
-    values, indices = topk(xs, k, dim, interleaved=interleaved)
+    values, indices = topk(
+        xs, k, dim, interleaved=interleaved, multithread_buckets=multithread_buckets
+    )
 
     expected_values, expected_indices = torch.topk(xs, k, dim)
 
@@ -52,13 +58,16 @@ def test__call_twice_on_same_data__does_not_crash() -> None:
 
 @pytest.mark.parametrize("n", [10, 16])
 @pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [False, True])
 def test__bucketed__no_batch__bucket_size_one__equal_to_exact(
-    n: int, interleaved: bool
+    n: int, interleaved: bool, multithread_buckets: bool
 ) -> None:
     xs = torch.randn(n, **rng_kwargs(856))
     # k=n with j=1 ensures that the buckets will have size one.
     k = n
-    values, indices = topk(xs, k, 0, j=1, interleaved=interleaved)
+    values, indices = topk(
+        xs, k, 0, j=1, interleaved=interleaved, multithread_buckets=multithread_buckets
+    )
 
     expected_values, expected_indices = torch.topk(xs, k, dim=0)
 
@@ -69,13 +78,21 @@ def test__bucketed__no_batch__bucket_size_one__equal_to_exact(
 @pytest.mark.parametrize("dim", [2])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [False, True])
 def test__bucketed__batched__bucket_size_one__equal_to_exact(
-    dim: int, dtype, interleaved: bool
+    dim: int, dtype, interleaved: bool, multithread_buckets: bool
 ) -> None:
     xs = torch.randn((16, 4, 12), dtype=dtype, **rng_kwargs(23))
     # k=topk size with j=1 ensures that the buckets will have size one.
     k = xs.size(dim)
-    values, indices = topk(xs, k, dim, j=1, interleaved=interleaved)
+    values, indices = topk(
+        xs,
+        k,
+        dim,
+        j=1,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
+    )
 
     expected_values, expected_indices = torch.topk(xs, k, dim)
 
@@ -85,14 +102,23 @@ def test__bucketed__batched__bucket_size_one__equal_to_exact(
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [False, True])
 def test__bucketed__batched__k_mult_means_bucket_size_one__equal_to_exact(
-    dtype, interleaved: bool
+    dtype, interleaved: bool, multithread_buckets: bool
 ) -> None:
     xs = torch.randn((32, 1024), dtype=dtype, **rng_kwargs(23))
     dim = -1
     k = 64
     # Setting k_mult=16 should mean we end up with 1024 buckets, so bucket size 1.
-    values, indices = topk(xs, k, dim, k_mult=16, j=1, interleaved=interleaved)
+    values, indices = topk(
+        xs,
+        k,
+        dim,
+        k_mult=16,
+        j=1,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
+    )
 
     expected_values, expected_indices = torch.topk(xs, k, dim)
 
@@ -100,7 +126,10 @@ def test__bucketed__batched__k_mult_means_bucket_size_one__equal_to_exact(
     assert torch.allclose(indices.sort(dim).values, expected_indices.sort(dim).values)
 
 
-def test__bucketed__not_interleaved__topk_ideally_distributed__equal_to_exact() -> None:
+@pytest.mark.parametrize("multithread_buckets", [False, True])
+def test__bucketed__not_interleaved__topk_ideally_distributed__equal_to_exact(
+    multithread_buckets: bool,
+) -> None:
     # We set up 4 buckets for a sequence length of 17:
     # [0 1 2 3 4] [5 6 7 8] [9 10 11 12] [13 14 15 16]
     # We then take two from each bucket.
@@ -125,7 +154,9 @@ def test__bucketed__not_interleaved__topk_ideally_distributed__equal_to_exact() 
     xs[1, 14] = 27.0
     xs[1, 15] = 28.0
 
-    values, indices = topk(xs, k, dim=1, j=j, interleaved=False)
+    values, indices = topk(
+        xs, k, dim=1, j=j, interleaved=False, multithread_buckets=multithread_buckets
+    )
     expected_values, expected_indices = torch.topk(xs, k, dim=1, largest=True)
 
     assert torch.allclose(values.sort(dim=1).values, expected_values.sort(dim=1).values)
@@ -134,9 +165,10 @@ def test__bucketed__not_interleaved__topk_ideally_distributed__equal_to_exact() 
     )
 
 
-def test__bucketed__not_interleaved__topk_ideally_distributed__long_sequence__equal_to_exact() -> (
-    None
-):
+@pytest.mark.parametrize("multithread_buckets", [False, True])
+def test__bucketed__not_interleaved__topk_ideally_distributed__long_sequence__equal_to_exact(
+    multithread_buckets: bool,
+) -> None:
     n = 10_000
     k = 8
     j = 2
@@ -148,7 +180,9 @@ def test__bucketed__not_interleaved__topk_ideally_distributed__long_sequence__eq
     xs[1, tuple(range(50, n, stride))] = torch.rand(n // stride, **rng_kwargs(1)) + 2.0
     # xs[1, -1] = 10.0
 
-    values, indices = topk(xs, k, dim=1, j=j, interleaved=False)
+    values, indices = topk(
+        xs, k, dim=1, j=j, interleaved=False, multithread_buckets=multithread_buckets
+    )
     expected_values, expected_indices = torch.topk(xs, k, dim=1, largest=True)
 
     assert torch.allclose(values.sort(dim=1).values, expected_values.sort(dim=1).values)
@@ -157,7 +191,10 @@ def test__bucketed__not_interleaved__topk_ideally_distributed__long_sequence__eq
     )
 
 
-def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact() -> None:
+@pytest.mark.parametrize("multithread_buckets", [False, True])
+def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact(
+    multithread_buckets: bool,
+) -> None:
     # We start with a sequence of length 17:
     # [0 1 2 3] [4 5 6 7] [8 9 10 11] [12 13 14 15] 16
     # Once interleaved, we end up with the following buckets
@@ -184,7 +221,9 @@ def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact() -> N
     xs[1, 7] = 27.0
     xs[1, 11] = 28.0
 
-    values, indices = topk(xs, k, dim=1, j=j, interleaved=True)
+    values, indices = topk(
+        xs, k, dim=1, j=j, interleaved=True, multithread_buckets=multithread_buckets
+    )
     expected_values, expected_indices = torch.topk(xs, k, dim=1, largest=True)
 
     assert torch.allclose(values.sort(dim=1).values, expected_values.sort(dim=1).values)
@@ -195,10 +234,20 @@ def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact() -> N
 
 @pytest.mark.parametrize("interleaved", [True, False])
 @pytest.mark.parametrize("k_per_bucket", [1, 2, 4])
-def test_against_reference_bucket_topk(interleaved, k_per_bucket) -> None:
+@pytest.mark.parametrize("multithread_buckets", [False, True])
+def test_against_reference_bucket_topk(
+    interleaved: bool, k_per_bucket: int, multithread_buckets: bool
+) -> None:
     torch.manual_seed(100)
     xs = torch.randn(5, 32, 512, device="cuda")
-    values, indices = topk(xs, k=64, dim=-1, j=k_per_bucket, interleaved=interleaved)
+    values, indices = topk(
+        xs,
+        k=64,
+        dim=-1,
+        j=k_per_bucket,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
+    )
     expected_values, expected_indices = bucket_topk(
         xs,
         k=64,

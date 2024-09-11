@@ -12,11 +12,16 @@ def topk(
     k_mult: int = 1,
     interleaved: bool = True,
     compile_mode: CompileMode = "optimize",
+    multithread_buckets: bool | None = False,
 ) -> tuple[Tensor, Tensor]:
     """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
 
     :param j: if not None, xs is split into k/j buckets, and then the top-j is computed
               for each bucket.
+    :param multithread_buckets: If True, use a warp of threads to process each bucket.
+                                If False, use a single thread for each bucket.
+                                If None, decide using heuristics based on the bucket
+                                size.
     """
     if dim < 0:
         dim = xs.ndim + dim
@@ -32,6 +37,9 @@ def topk(
     else:
         raise ValueError(f"k_mult must be >=1, was {k_mult}")
 
+    if multithread_buckets is None:
+        multithread_buckets = False
+
     impl = load_cuda_extension("priority_queue.cu", compile_mode)
 
     output_shape = list(xs.shape)
@@ -44,7 +52,15 @@ def topk(
 
     largest = True
     impl.priority_queue_topk(
-        xs, k0, j, dim, largest, interleaved, stage_1_values, stage_1_indices
+        xs,
+        k0,
+        j,
+        dim,
+        largest,
+        interleaved,
+        multithread_buckets,
+        stage_1_values,
+        stage_1_indices,
     )
 
     if k0 == k:

@@ -8,6 +8,7 @@
 #include <ATen/cuda/ScanUtils.cuh>
 #include <ATen/cuda/DeviceUtils.cuh>
 #include <ATen/native/cuda/SortingCommon.cuh>
+#include <cub/block/block_merge_sort.cuh>
 #include <limits>
 #include <tuple>
 
@@ -106,11 +107,23 @@ namespace approx_topk
       }
     }
 
+    template <typename IndexType, int J>
+    __device__ void correctIndices(
+        IndexType *largestIndices,
+        IndexType indexCorrectionOffset, IndexType indexCorrectionStride)
+    {
+#pragma unroll
+      for (IndexType i = 0; i < J; i++)
+      {
+        largestIndices[i] =
+            indexCorrectionOffset + largestIndices[i] * indexCorrectionStride;
+      }
+    }
+
     template <typename T, typename IndexType, int Dim, int J>
     __device__ void writeOutputs(
         T *largestValues, IndexType *largestIndices,
         IndexType sliceIndex, IndexType offset,
-        IndexType indexCorrectionOffset, IndexType indexCorrectionStride,
 
         at::cuda::detail::TensorInfo<T, IndexType> topK,
         IndexType topKWithinSliceStride,
@@ -129,13 +142,12 @@ namespace approx_topk
       for (IndexType i = 0; i < J; i++)
       {
         valuesOutputStart[i * topKWithinSliceStride] = largestValues[i];
-        indicesOutputStart[i * indicesWithinSliceStride] =
-            indexCorrectionOffset + largestIndices[i] * indexCorrectionStride;
+        indicesOutputStart[i * indicesWithinSliceStride] = largestIndices[i];
       }
     }
 
     template <typename T, typename IndexType, int Dim, int J>
-    __global__ void priorityQueueTopk(
+    __global__ void threadTopk(
         at::cuda::detail::TensorInfo<const T, IndexType> input,
         IndexType inputSliceSize,
         IndexType k,
@@ -159,21 +171,96 @@ namespace approx_topk
 
       auto [inputBucketSize, inputStartIndex, inputIndexStride] =
           calculateBucket(bucketId, inputSliceSize, numBuckets, interleaved);
+      IndexType inputOffset = inputStartIndex * inputWithinSliceStride;
       IndexType inputStride = inputWithinSliceStride * inputIndexStride;
 
-      IndexType inputOffset = inputStartIndex * inputWithinSliceStride;
       T largestValues[J];
       IndexType largestIndices[J];
       findJLargest<T, IndexType, Dim, J>(
           input, sliceIndex, inputOffset, inputBucketSize, inputStride, largest,
           largestValues, largestIndices);
+      correctIndices<IndexType, J>(largestIndices, inputStartIndex, inputIndexStride);
 
       IndexType outputBucketSize = k / numBuckets;
       IndexType outputOffset = bucketId * outputBucketSize;
       writeOutputs<T, IndexType, Dim, J>(
           largestValues, largestIndices,
           sliceIndex, outputOffset,
-          inputStartIndex, inputIndexStride,
+          topK, topKWithinSliceStride, indices, indicesWithinSliceStride);
+    }
+
+    struct Descending
+    {
+      template <typename T>
+      __device__ bool operator()(const T &lhs, const T &rhs)
+      {
+        return lhs > rhs;
+      }
+    };
+
+    template <typename T, typename IndexType, int Dim, int J>
+    __global__ void blockTopk(
+        at::cuda::detail::TensorInfo<const T, IndexType> input,
+        IndexType inputSliceSize,
+        IndexType k,
+        bool largest,
+        bool interleaved,
+
+        IndexType numInputSlices,
+        IndexType inputWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<T, IndexType> topK,
+        IndexType topKWithinSliceStride,
+
+        at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
+        IndexType indicesWithinSliceStride)
+    {
+      IndexType sliceIndex = blockIdx.x;
+      IndexType bucketId = blockIdx.y;
+      IndexType threadId = threadIdx.x;
+      IndexType numBuckets = k / J;
+      if (sliceIndex >= numInputSlices || bucketId >= numBuckets)
+        return;
+
+      auto [bucketSize, bucketStartIndex, bucketIndexStride] =
+          calculateBucket(bucketId, inputSliceSize, numBuckets, interleaved);
+      IndexType numThreads = min((int64_t)blockDim.x, (int64_t)bucketSize);
+
+      IndexType inputStartIndex = bucketStartIndex + threadId * bucketIndexStride;
+      IndexType inputOffset = inputStartIndex * inputWithinSliceStride;
+      IndexType inputLength = bucketSize / numThreads;
+      if (threadId < bucketSize - inputLength * numThreads)
+        inputLength += 1;
+      IndexType inputIndexStride = bucketIndexStride * numThreads;
+      IndexType inputStride = inputWithinSliceStride * inputIndexStride;
+
+      // We might launch more threads than needed in which case we don't want to process
+      // any inputs. We can't just early exit because this thread's queues will still
+      // take part in the sort later, thus we need to make sure we initialise our
+      // queues otherwise uninitialised values will end up in the output.
+      if (threadId >= bucketSize)
+        inputLength = 0;
+
+      T largestValues[J];
+      IndexType largestIndices[J];
+      findJLargest<T, IndexType, Dim, J>(
+          input, sliceIndex, inputOffset, inputLength, inputStride, largest,
+          largestValues, largestIndices);
+      correctIndices<IndexType, J>(largestIndices, inputStartIndex, inputIndexStride);
+
+      using BlockMergeSort = cub::BlockMergeSort<T, 32, J, IndexType>;
+      __shared__ typename BlockMergeSort::TempStorage temp_storage_shuffle;
+      BlockMergeSort(temp_storage_shuffle).Sort(largestValues, largestIndices, Descending());
+
+      // The first thread contains the top-j, thus is the only one to write.
+      if (threadId > 0)
+        return;
+
+      IndexType outputBucketSize = k / numBuckets;
+      IndexType outputOffset = bucketId * outputBucketSize;
+      writeOutputs<T, IndexType, Dim, J>(
+          largestValues, largestIndices,
+          sliceIndex, outputOffset,
           topK, topKWithinSliceStride, indices, indicesWithinSliceStride);
     }
 
@@ -184,6 +271,7 @@ namespace approx_topk
         IndexType k,
         bool largest,
         bool interleaved,
+        bool multithreadBuckets,
 
         IndexType numInputSlices,
         IndexType inputWithinSliceStride,
@@ -202,29 +290,50 @@ namespace approx_topk
       TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
       IndexType numBuckets = k / J;
       int warp_size = at::cuda::warp_size();
-      IndexType blockY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
-      dim3 grid(numInputSlices, blockY, 1);
-      dim3 block(warp_size);
 
-      priorityQueueTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
-          input,
-          inputSliceSize,
-          k,
-          largest,
-          interleaved,
-          numInputSlices,
-          inputWithinSliceStride,
-          topK,
-          topKWithinSliceStride,
-          indices,
-          indicesWithinSliceStride);
+      if (multithreadBuckets)
+      {
+        dim3 grid(numInputSlices, numBuckets, 1);
+        dim3 block(32);
+        blockTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+            input,
+            inputSliceSize,
+            k,
+            largest,
+            interleaved,
+            numInputSlices,
+            inputWithinSliceStride,
+            topK,
+            topKWithinSliceStride,
+            indices,
+            indicesWithinSliceStride);
+      }
+      else
+      {
+        IndexType gridY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
+        dim3 grid(numInputSlices, gridY, 1);
+        dim3 block(warp_size);
+        threadTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+            input,
+            inputSliceSize,
+            k,
+            largest,
+            interleaved,
+            numInputSlices,
+            inputWithinSliceStride,
+            topK,
+            topKWithinSliceStride,
+            indices,
+            indicesWithinSliceStride);
+      }
       C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
   }
 
   void priority_queue_topk(
-      const Tensor &self, int64_t k, int64_t j, int64_t dim, bool largest,
-      bool interleaved, const Tensor &values, const Tensor &indices)
+      const Tensor &self, int64_t k, int64_t j, // int64_t k_mult,
+      int64_t dim, bool largest, bool interleaved, bool multithread_buckets,
+      const Tensor &values, const Tensor &indices)
   {
     TensorArg input_arg{self, "xs", 1}, topK_arg{values, "valuesOutput", 2},
         indices_arg{indices, "indicesOutput", 3};
@@ -251,6 +360,7 @@ namespace approx_topk
       static_cast<INDEX_T>(k),                                   \
       largest,                                                   \
       interleaved,                                               \
+      multithread_buckets,                                       \
       static_cast<INDEX_T>(numInputSlices),                      \
       static_cast<INDEX_T>(inputInfo.strides[collapseInputDim]), \
       topKInfo,                                                  \
