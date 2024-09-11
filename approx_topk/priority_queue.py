@@ -38,7 +38,10 @@ def topk(
         raise ValueError(f"k_mult must be >=1, was {k_mult}")
 
     if multithread_buckets is None:
-        multithread_buckets = False
+        # A rough heuristic based on some experiments.
+        # TODO: Decide if this heuristic should depend on batch size.
+        bucket_size = xs.shape[dim] // (k // j)
+        multithread_buckets = bucket_size > 512
 
     impl = load_cuda_extension("priority_queue.cu", compile_mode)
 
