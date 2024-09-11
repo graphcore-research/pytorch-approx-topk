@@ -290,9 +290,12 @@ namespace approx_topk
       TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
       IndexType numBuckets = k / J;
       int warp_size = at::cuda::warp_size();
+      // FIXME: This should be the device the tensors are on, not the current device.
+      const auto kMaxGridSizeY = at::cuda::getCurrentDeviceProperties()->maxGridSize[1];
 
       if (multithreadBuckets)
       {
+        TORCH_CHECK(numBuckets <= kMaxGridSizeY, "topk: too many buckets")
         dim3 grid(numInputSlices, numBuckets, 1);
         dim3 block(32);
         blockTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
@@ -311,6 +314,7 @@ namespace approx_topk
       else
       {
         IndexType gridY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
+        TORCH_CHECK(gridY <= kMaxGridSizeY, "topk: too many buckets")
         dim3 grid(numInputSlices, gridY, 1);
         dim3 block(warp_size);
         threadTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
