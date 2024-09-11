@@ -163,8 +163,8 @@ namespace approx_topk
         at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
         IndexType indicesWithinSliceStride)
     {
-      IndexType sliceIndex = blockIdx.x;
-      IndexType bucketId = blockIdx.y * 32 + threadIdx.x;
+      IndexType sliceIndex = blockIdx.y;
+      IndexType bucketId = blockIdx.x * 32 + threadIdx.x;
       IndexType numBuckets = k / J;
       if (sliceIndex >= numInputSlices || bucketId >= numBuckets)
         return;
@@ -215,8 +215,8 @@ namespace approx_topk
         at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
         IndexType indicesWithinSliceStride)
     {
-      IndexType sliceIndex = blockIdx.x;
-      IndexType bucketId = blockIdx.y;
+      IndexType sliceIndex = blockIdx.y;
+      IndexType bucketId = blockIdx.x;
       IndexType threadId = threadIdx.x;
       IndexType numBuckets = k / J;
       if (sliceIndex >= numInputSlices || bucketId >= numBuckets)
@@ -282,22 +282,20 @@ namespace approx_topk
         at::cuda::detail::TensorInfo<int64_t, IndexType> indices,
         IndexType indicesWithinSliceStride)
     {
-      // We use the x dimension of the grid for batches provided by the user.
-      // There is then one thread per bucket. We group these into warps of 32, and put
-      // each warp in its own block.
-      // 2^31 - 1 = the max grid size in the x dimension, from compute capability 3.0.
-      TORCH_CHECK(k <= inputSliceSize, "topk k must not be larger than topk size");
-      TORCH_INTERNAL_ASSERT(numInputSlices < 2 ^ 31 - 1, "Too many slices for topk");
-      IndexType numBuckets = k / J;
-      int warp_size = at::cuda::warp_size();
       // FIXME: This should be the device the tensors are on, not the current device.
-      const auto kMaxGridSizeY = at::cuda::getCurrentDeviceProperties()->maxGridSize[1];
+      const auto kMaxGridSize = at::cuda::getCurrentDeviceProperties()->maxGridSize;
+      auto warp_size = at::cuda::warp_size();
+      // We use the y dimension of the grid for batches provided by the user.
+      TORCH_CHECK(numInputSlices < kMaxGridSize[1], "Too many slices for topk");
+      TORCH_CHECK(k <= inputSliceSize, "topk: k must not be larger than topk size");
+      IndexType numBuckets = k / J;
 
       if (multithreadBuckets)
       {
-        TORCH_CHECK(numBuckets <= kMaxGridSizeY, "topk: too many buckets")
-        dim3 grid(numInputSlices, numBuckets, 1);
-        dim3 block(32);
+        TORCH_CHECK(numBuckets <= kMaxGridSize[0], "topk: too many buckets")
+        dim3 grid(numBuckets, numInputSlices, 1);
+        const uint kNumThreads = 64;
+        dim3 block(kNumThreads);
         blockTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
             input,
             inputSliceSize,
@@ -313,9 +311,10 @@ namespace approx_topk
       }
       else
       {
-        IndexType gridY = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
-        TORCH_CHECK(gridY <= kMaxGridSizeY, "topk: too many buckets")
-        dim3 grid(numInputSlices, gridY, 1);
+        // We use one thread per bucket and group them into one warp per block.
+        IndexType gridX = at::ceil_div((int64_t)numBuckets, (int64_t)warp_size);
+        TORCH_CHECK(gridX <= kMaxGridSize[0], "topk: too many buckets")
+        dim3 grid(gridX, numInputSlices, 1);
         dim3 block(warp_size);
         threadTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
             input,
@@ -345,14 +344,14 @@ namespace approx_topk
 
     int numDims = self.dim();
     numDims = numDims == 0 ? 1 : numDims;
-    TORCH_CHECK(numDims <= MAX_DIMS, "input tensor has too many dimensions");
+    TORCH_CHECK(numDims <= MAX_DIMS, "topk: input tensor has too many dimensions");
     int64_t sliceSize = self.dim() == 0 ? 1 : self.size(dim);
 
     // k=0 is valid but no work needs to be done, so exit early to simplify the rest
     // of the implementation.
     if (k == 0)
       return;
-    TORCH_CHECK(k % j == 0, "topk j must divide k");
+    TORCH_CHECK(k % j == 0, "topk: j must divide k");
 
     auto input = self.contiguous();
     // static_cast is required to ensure that the correct type (INDEX_T)
@@ -374,26 +373,26 @@ namespace approx_topk
 
     // J has to be a statically known template parameter so that the priorty queue can
     // be kept in registers rather than local memory.
-#define RUN_K(INDEX_T, DIM)                      \
-  if (j == 1)                                    \
-  {                                              \
-    RUN_J(INDEX_T, DIM, 1);                      \
-  }                                              \
-  else if (j == 2)                               \
-  {                                              \
-    RUN_J(INDEX_T, DIM, 2);                      \
-  }                                              \
-  else if (j == 3)                               \
-  {                                              \
-    RUN_J(INDEX_T, DIM, 3);                      \
-  }                                              \
-  else if (j == 4)                               \
-  {                                              \
-    RUN_J(INDEX_T, DIM, 4);                      \
-  }                                              \
-  else                                           \
-  {                                              \
-    TORCH_CHECK(false, "topk j must 0 < j < 5"); \
+#define RUN_K(INDEX_T, DIM)                       \
+  if (j == 1)                                     \
+  {                                               \
+    RUN_J(INDEX_T, DIM, 1);                       \
+  }                                               \
+  else if (j == 2)                                \
+  {                                               \
+    RUN_J(INDEX_T, DIM, 2);                       \
+  }                                               \
+  else if (j == 3)                                \
+  {                                               \
+    RUN_J(INDEX_T, DIM, 3);                       \
+  }                                               \
+  else if (j == 4)                                \
+  {                                               \
+    RUN_J(INDEX_T, DIM, 4);                       \
+  }                                               \
+  else                                            \
+  {                                               \
+    TORCH_CHECK(false, "topk: j must 0 < j < 5"); \
   }
 
 #define RUN_DIM(INDEX_T) \
