@@ -198,7 +198,7 @@ namespace approx_topk
       }
     };
 
-    template <typename T, typename IndexType, int Dim, int J>
+    template <typename T, typename IndexType, int Dim, int J, int NumThreads>
     __global__ void blockTopk(
         at::cuda::detail::TensorInfo<const T, IndexType> input,
         IndexType inputSliceSize,
@@ -248,7 +248,7 @@ namespace approx_topk
           largestValues, largestIndices);
       correctIndices<IndexType, J>(largestIndices, inputStartIndex, inputIndexStride);
 
-      using BlockMergeSort = cub::BlockMergeSort<T, 32, J, IndexType>;
+      using BlockMergeSort = cub::BlockMergeSort<T, NumThreads, J, IndexType>;
       __shared__ typename BlockMergeSort::TempStorage temp_storage_shuffle;
       BlockMergeSort(temp_storage_shuffle).Sort(largestValues, largestIndices, Descending());
 
@@ -296,7 +296,7 @@ namespace approx_topk
         dim3 grid(numBuckets, numInputSlices, 1);
         const uint kNumThreads = 64;
         dim3 block(kNumThreads);
-        blockTopk<T, IndexType, Dim, J><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
+        blockTopk<T, IndexType, Dim, J, kNumThreads><<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
             input,
             inputSliceSize,
             k,
