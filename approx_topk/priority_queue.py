@@ -1,3 +1,5 @@
+import math
+
 import torch
 from torch import Tensor
 
@@ -38,10 +40,19 @@ def topk(
         raise ValueError(f"k_mult must be >=1, was {k_mult}")
 
     if multithread_buckets is None:
-        # A rough heuristic based on some experiments.
-        # TODO: Decide if this heuristic should depend on batch size.
-        bucket_size = xs.shape[dim] // (k // j)
-        multithread_buckets = bucket_size > 512
+        n_slices = math.prod(1 if i == dim else d for i, d in enumerate(xs.shape))
+        buckets_per_slice = k0 // j
+        total_buckets = n_slices * buckets_per_slice
+        bucket_size = xs.shape[dim] // buckets_per_slice
+        # As a heuristic, we want to use the thread-per-bucket kernel if we have enough
+        # buckets to saturate the GPU, or if the buckets are quite small.
+        # FIXME: Should do this in C++ so we can use the stats of the actual GPU.
+        n_sms = 120
+        threads_per_warp = 32
+        lots_of_buckets = total_buckets >= n_sms * threads_per_warp
+        small_buckets = bucket_size < 64
+        use_thread_per_bucket = lots_of_buckets or small_buckets
+        multithread_buckets = not use_thread_per_bucket
 
     impl = load_cuda_extension("priority_queue.cu", compile_mode)
 
