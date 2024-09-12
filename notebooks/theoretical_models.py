@@ -54,6 +54,20 @@ class cost_serial(cost):
         return min(cls.insertion(**kwargs), cls.radix(**kwargs))
 
 
+class cost_hybrid(cost):
+    @staticmethod
+    def insertion(*, k: int, n: int, m: int) -> int:
+        return n * (3*k - 1)
+
+    @staticmethod
+    def radix(*, k: int, n: int, m: int) -> int:
+        return n * (4*log2(n) + 4)
+
+    @classmethod
+    def topk(cls, **kwargs: Any) -> int:
+        return min(cls.insertion(**kwargs), cls.radix(**kwargs))
+
+
 class cost_parallel(cost):
     @staticmethod
     def scan(*, k: int, n: int, m: int) -> int:
@@ -68,6 +82,9 @@ class cost_parallel(cost):
         return min(cls.scan(**kwargs), cls.radix(**kwargs))
 
 
+COST_MODELS = [cost_basic, cost_serial, cost_hybrid, cost_parallel]
+
+
 def _test_knm(*, k: int, n: int, m: int, reps: int) -> Iterable[dict[str, Any]]:
     exact_args = dict(k=k, n=n, m=m)
     yield dict(
@@ -77,9 +94,7 @@ def _test_knm(*, k: int, n: int, m: int, reps: int) -> Iterable[dict[str, Any]]:
         recall_simulation=1.0,
         recall_simulation_n=reps,
         recall_simulation_std=0.0,
-        cost_basic=cost_basic.topk(**exact_args),
-        cost_serial=cost_serial.topk(**exact_args),
-        cost_parallel=cost_parallel.topk(**exact_args),
+        **{c.__name__: c.topk(**exact_args) for c in COST_MODELS},
     )
     for b in [2**i for i in range(1, int(log2(n)) + 1)]:
         for k_b in [2**i for i in range(0, int(log2(k)) + 1)]:
@@ -93,9 +108,7 @@ def _test_knm(*, k: int, n: int, m: int, reps: int) -> Iterable[dict[str, Any]]:
                     recall_simulation=sim_mean,
                     recall_simulation_n=reps,
                     recall_simulation_std=sim_std,
-                    cost_basic=cost_basic.approx_topk(**approx_args),
-                    cost_serial=cost_serial.approx_topk(**approx_args),
-                    cost_parallel=cost_parallel.approx_topk(**approx_args),
+                    **{c.__name__: c.approx_topk(**approx_args) for c in COST_MODELS},
                 )
 
 
