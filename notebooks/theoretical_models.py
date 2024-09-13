@@ -98,7 +98,7 @@ def _test_knm(*, k: int, n: int, m: int, reps: int) -> Iterable[dict[str, Any]]:
     )
     for b in [2**i for i in range(1, int(log2(n)) + 1)]:
         for k_b in [2**i for i in range(0, int(log2(k)) + 1)]:
-            if b * k_b >= k and (k_b < n//b):
+            if b * k_b >= k and (k_b <= n//b):
                 approx_args = dict(**exact_args, b=b, k_b=k_b)
                 sim_mean, sim_std = recall.simulation(**approx_args, reps=reps)
                 yield dict(
