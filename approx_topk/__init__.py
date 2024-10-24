@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 from typing import Protocol
 
 from torch import Tensor

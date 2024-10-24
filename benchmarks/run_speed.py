@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 """Compares the time taken by different topk methods."""
 
 from functools import partial
