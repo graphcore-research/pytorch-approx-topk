@@ -22,6 +22,6 @@ def load_cuda_extension(file_name: str, compile_mode: CompileMode):
     return cpp_extension.load(
         name=file_name.removesuffix(".cu") + "_topk",
         # TODO: Work out how to package the C code properly.
-        sources=[str(Path("approx_topk") / file_name)],
+        sources=[str(Path(__file__).parent / file_name)],
         extra_cuda_cflags=nvcc_flags,
     )
