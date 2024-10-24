@@ -5,6 +5,7 @@ description = "Bucketed top-k for PyTorch using a priority queue"
 authors = ["Oscar Key <oscar.t.key@gmail.com>"]
 readme = "README.md"
 license = "MIT"
+include = ["approx_topk/*.cu"]
 
 [tool.poetry.dependencies]
 python = "^3.11"
