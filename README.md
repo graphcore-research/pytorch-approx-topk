@@ -11,6 +11,7 @@ Usage:
 
 ```py
 from approx_topk.priority_queue import topk as approx_topk
+import torch
 
 x = torch.randn(128, int(2**20), device="cuda")
 values, indices = approx_topk(x, k=int(2**16), dim=-1, j=2, k_mult=1)
