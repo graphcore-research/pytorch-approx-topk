@@ -2,12 +2,12 @@
 
 An alpha implementation of the bucketed top-k algorithm using a priority queue.
 
-Requires: Python 3.11, CUDA toolkit 12.1.
+Requires: Python 3.11, CUDA toolkit 12.1, Ninja (`ninja-build`).
 ```sh
 pip install git+https://github.com/graphcore-research/pytorch-approx-topk.git
 ```
 
-Usage:
+Usage (note that kernel compilation on first use may take a while):
 
 ```py
 from approx_topk.priority_queue import topk as approx_topk
