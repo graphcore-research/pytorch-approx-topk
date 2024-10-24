@@ -1,19 +1,87 @@
 """Run an experiment to measure runtime."""
 
+import itertools
 import json
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
+import cupy as cp
 import torch
 import tqdm
+from pylibraft.common import Handle
+from pylibraft.matrix import select_k as raft_select_k
 from torch import Tensor
-from torch.cuda import Event
 
 from approx_topk import Topk, bucket_argmax, priority_queue, torch_default
 
 
-def benchmark_gpu(
+@dataclass(frozen=True)
+class Experiment(ABC):
+    cuda_graphs: bool
+    batch_size: int
+    topk_size: int
+    k: int
+    dtype: torch.dtype
+    n_warmup: int = 16
+    n_outer: int = 16
+    n_inner: int = 128
+    n_inner_inputs: Optional[int] = None
+
+    @abstractmethod
+    def save(self) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def run(self) -> list[float]: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class PyTorchExperiment(Experiment):
+    method: Topk
+    args: dict[str, Any]
+    compile: Optional[str]
+
+    def save(self) -> dict[str, Any]:
+        d = asdict(self)
+        method = d.pop("method")
+        d["method"] = f"{method.__module__}.{method.__name__}"
+        d["dtype"] = str(d.pop("dtype")).replace("torch.", "")
+        return d
+
+    def run(self) -> list[float]:
+        method = self.method
+        if self.compile:
+            torch.compiler.reset()
+            method = torch.compile(
+                method, mode=self.compile, fullgraph=True, dynamic=False
+            )
+
+        assert self.n_inner_inputs is None or self.n_inner_inputs <= self.n_inner
+        xs = torch.zeros(
+            self.n_inner if self.n_inner_inputs is None else self.n_inner_inputs,
+            self.batch_size,
+            self.topk_size,
+            dtype=self.dtype,
+            device="cuda",
+        )
+
+        def inner_loop_fn() -> list[Tensor]:
+            return [
+                method(xs[i % xs.shape[0]], k=self.k, dim=1, **self.args)[0]
+                for i in range(self.n_inner)
+            ]
+
+        return benchmark_pytorch(
+            inner_loop_fn,
+            steps=self.n_outer,
+            pre_fn=lambda: torch.nn.init.normal_(xs),
+            cuda_graphs=self.cuda_graphs,
+            warmup_steps=self.n_warmup,
+        )
+
+
+def benchmark_pytorch(
     fn: Callable[[], Any],
     steps: int,
     pre_fn: Callable[[], Any] = lambda: None,
@@ -63,70 +131,81 @@ def benchmark_gpu(
     return [start.elapsed_time(end) / 1e3 for start, end in events]
 
 
-@dataclass
-class Experiment:
-    method: Topk
-    args: dict[str, Any]
-    compile: Optional[str]
-    cuda_graphs: bool
-    batch_size: int
-    topk_size: int
-    k: int
-    dtype: torch.dtype
-    n_warmup: int = 16
-    n_outer: int = 16
-    n_inner: int = 128
-    n_inner_inputs: Optional[int] = None
+@dataclass(frozen=True, kw_only=True)
+class RaftExperiment(Experiment):
+    def __post_init__(self):
+        if self.dtype != torch.float32:
+            raise ValueError("Raft only supports float32")
 
     def save(self) -> dict[str, Any]:
-        d = self.__dict__.copy()
-        method = d.pop("method")
-        d["method"] = f"{method.__module__}.{method.__name__}"
+        d = asdict(self)
+        d["method"] = "raft"
         d["dtype"] = str(d.pop("dtype")).replace("torch.", "")
+        d["args"] = {}
+        d["compile"] = None
         return d
 
-
-def run(config: Experiment) -> list[float]:
-    method = config.method
-    if config.compile:
-        torch.compiler.reset()
-        method = torch.compile(
-            method, mode=config.compile, fullgraph=True, dynamic=False
+    def run(self) -> list[float]:
+        xs = cp.empty(
+            (
+                self.n_inner if self.n_inner_inputs is None else self.n_inner_inputs,
+                self.batch_size,
+                self.topk_size,
+            ),
+            dtype=cp.float32,
         )
+        values = cp.empty(xs.shape[1:], dtype=cp.float32)
+        indices = cp.empty(xs.shape[1:], dtype=cp.int64)
 
-    assert config.n_inner_inputs is None or config.n_inner_inputs <= config.n_inner
-    xs = torch.zeros(
-        config.n_inner if config.n_inner_inputs is None else config.n_inner_inputs,
-        config.batch_size,
-        config.topk_size,
-        dtype=config.dtype,
-        device="cuda",
-    )
+        cupy_stream = cp.cuda.Stream()
+        raft_handle = Handle(cupy_stream.ptr)
 
-    def inner_loop_fn() -> list[Tensor]:
-        return [
-            method(xs[i % xs.shape[0]], k=config.k, dim=1, **config.args)[0]
-            for i in range(config.n_inner)
-        ]
+        def pre_fn():
+            xs[:, :, :] = cp.random.standard_normal(xs.shape)
 
-    return benchmark_gpu(
-        inner_loop_fn,
-        steps=config.n_outer,
-        pre_fn=lambda: torch.nn.init.normal_(xs),
-        cuda_graphs=config.cuda_graphs,
-        warmup_steps=config.n_warmup,
-    )
+        def fn():
+            for i in range(self.n_inner):
+                raft_select_k(
+                    xs[i % xs.shape[0]],
+                    self.k,
+                    select_min=False,
+                    distances=values,
+                    indices=indices,
+                    handle=raft_handle,
+                )
+
+        if self.cuda_graphs:
+            cupy_stream.begin_capture()
+            fn()
+            graph = cupy_stream.end_capture()
+            fn = graph.launch
+
+        for _ in range(self.n_outer if self.n_warmup is None else self.n_warmup):
+            fn()
+
+        events = [(cp.cuda.Event(), cp.cuda.Event()) for _ in range(self.n_outer)]
+        for start, end in events:
+            pre_fn()
+            start.record(stream=cupy_stream)
+            fn()
+            end.record(stream=cupy_stream)
+        cupy_stream.synchronize()
+        return [cp.cuda.get_elapsed_time(start, end) / 1e3 for start, end in events]
 
 
-def sweep(configs: list[Experiment], out: Path) -> None:
+def sweep(configs: Iterable[Experiment], out: Path) -> None:
     out.parent.mkdir(exist_ok=True)
     with out.open("w") as f:
-        for config in tqdm.tqdm(configs):
+        iterator = tqdm.tqdm(configs)
+        for config in iterator:
+            iterator.set_description(
+                " ".join(f"{k}={v}" for k, v in config.save().items())
+            )
             print(
                 json.dumps(
                     dict(
                         **config.save(),
-                        duration=run(config),
+                        duration=config.run(),
                         device=torch.cuda.get_device_name(),
                     )
                 ),
@@ -141,57 +220,51 @@ def fake_topk_sum(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
 
 
 if __name__ == "__main__":
-    sweep(
-        [
-            Experiment(
-                method=method,
-                args=args,
-                compile=compile,
-                cuda_graphs=True,
-                batch_size=32,
-                topk_size=topk_size,
-                k=topk_size // topk_ratio,
-                dtype=torch.float16,
-                n_inner_inputs=n_inner_inputs,
-            )
-            for n_inner_inputs in [
-                None,  # large input size (main memory)
-                1,  # .. small input size (L2 cache)
+    experiments: list[Experiment] = []
+    ns = [2**n for n in [16, 15, 14, 13, 12]]
+    batch_sizes = [128, 32]
+    for n, batch_size in itertools.product(ns, batch_sizes):
+        for k in [64, n // 8]:
+            experiments += [
+                RaftExperiment(
+                    cuda_graphs=True,
+                    batch_size=batch_size,
+                    topk_size=n,
+                    k=k,
+                    dtype=torch.float32,
+                )
             ]
-            for compile in [
-                None,
-                "default",
-                # "max-autotune-no-cudagraphs",
+            experiments += [
+                PyTorchExperiment(
+                    method=method,
+                    args=args,
+                    compile="default" if method is bucket_argmax.topk_torch else None,
+                    cuda_graphs=True,
+                    batch_size=batch_size,
+                    topk_size=n,
+                    k=k,
+                    dtype=torch.float32,
+                )
+                for km in [1]
+                for mtb in [False, True]
+                for method, args in [
+                    (torch_default.topk, {}),
+                    (
+                        priority_queue.topk,
+                        dict(j=1, k_mult=km, multithread_buckets=mtb),
+                    ),
+                    (
+                        priority_queue.topk,
+                        dict(j=2, k_mult=km, multithread_buckets=mtb),
+                    ),
+                    (
+                        priority_queue.topk,
+                        dict(j=4, k_mult=km, multithread_buckets=mtb),
+                    ),
+                    (bucket_argmax.topk_torch, dict(interleaved=True)),
+                ]
+                if method is priority_queue.topk or (km == 1 and mtb == False)
+                if k * km < n
             ]
-            for method, args in [
-                (fake_topk_sum, {}),
-                (torch_default.topk, {}),
-                (
-                    priority_queue.topk,
-                    dict(j=1, compile_mode="optimize", interleaved=False),
-                ),
-                (
-                    priority_queue.topk,
-                    dict(j=1, compile_mode="optimize", interleaved=True),
-                ),
-                (
-                    priority_queue.topk,
-                    dict(j=4, compile_mode="optimize", interleaved=True),
-                ),
-                (bucket_argmax.topk_torch, dict(interleaved=True)),
-                (
-                    bucket_argmax.topk_triton,
-                    dict(interleaved=True, block_size=128, kernel="bk"),
-                ),
-                (
-                    bucket_argmax.topk_triton,
-                    dict(interleaved=True, block_size=64, kernel="bkn"),
-                ),
-            ]
-            for topk_size in [2**n for n in [12, 14, 16, 18]]
-            for topk_ratio in [4, 8, 16, 32]
-            if not (compile and method is priority_queue.topk)
-            if not (compile and method is bucket_argmax.topk_triton)
-        ],
-        Path("results/measure_speed.jsonl"),
-    )
+
+    sweep(experiments, Path("results/measure_speed.jsonl"))

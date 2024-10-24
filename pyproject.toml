@@ -20,15 +20,20 @@ types-tqdm = "^4.66.0.20240417"
 [tool.poetry.group.benchmarks.dependencies]
 matplotlib = "^3.9.0"
 tqdm = "^4.66.5"
-
-[tool.poetry.group.extra.dependencies]
 ipykernel = "^6.29.5"
 pandas = "^2.2.2"
 seaborn = "^0.13.2"
+pylibraft-cu12 = { version = "^24.10.0", source = "nvidia" }
+cupy-cuda12x = "^13.3.0"
 
 [[tool.poetry.source]]
 name = "pytorch_cu124"
 url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
 priority = "explicit"
 
 [build-system]
