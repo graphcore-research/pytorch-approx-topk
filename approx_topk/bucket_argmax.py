@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 """A technique with k=1 for each bucket."""
 
 from typing import Any, Literal

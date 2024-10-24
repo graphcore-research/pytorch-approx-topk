@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 import torch
 from torch import Tensor
 from torch.nn.functional import pad

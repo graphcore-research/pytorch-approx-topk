@@ -1,3 +1,4 @@
+// Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
 
 // #define TORCH_ASSERT_NO_OPERATORS
 #include <ATen/core/TensorBase.h>

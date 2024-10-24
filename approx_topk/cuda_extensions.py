@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 from functools import cache
 from pathlib import Path
 from typing import Literal

@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 """Wrapper around torch.topk() to match our topk Protocol,
 as well as the reference bucketed top-k implementation using torch.topk
 """

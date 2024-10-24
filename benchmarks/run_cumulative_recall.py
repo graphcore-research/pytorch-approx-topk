@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 """Computes the cumulative recall of the top k of different approximate methods.
 
 Cumulative recall at j = the probability that the approximate method retrieves all of

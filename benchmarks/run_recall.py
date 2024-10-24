@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
+
 """Benchmarks the top-50 and top-k recall for different values of k."""
 
 from functools import partial
