@@ -23,7 +23,7 @@ Repository highlights:
 
 - `approx_top/` PyTorch library code
   - [priority_queue.py](approx_topk/priority_queue.py) custom priority queue implementation (also [priority_queue.cu](approx_topk/priority_queue.cu))
-  - [bucket_argmax.py](approx_topk/bucket_argmax.py) $k_b\!=\!1$ torch & triton implementations
+  - [bucket_argmax.py](approx_topk/bucket_argmax.py) $k_b=1$ torch & triton implementations
 - `benchmarks/` benchmarking scripts
   - [measure_speed.py](benchmarks/measure_speed.py) main benchmarking script for measuring runtime/bandwidth as in Figure 1
 - `notebooks/` experimental results notebooks (including work-in-progress results)
