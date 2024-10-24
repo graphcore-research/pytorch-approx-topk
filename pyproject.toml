@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "pytorch-approx-topk"
+name = "approx-topk"
 version = "0.1.0"
 description = "Bucketed top-k for PyTorch using a priority queue"
 authors = ["Oscar Key <oscar.t.key@gmail.com>"]
