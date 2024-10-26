@@ -8,6 +8,7 @@ from torch import Tensor
 from approx_topk.cuda_extensions import CompileMode, load_cuda_extension
 
 
+@torch.library.custom_op("approx_topk::topk", mutates_args=())
 def topk(
     xs: Tensor,
     k: int,
@@ -15,7 +16,6 @@ def topk(
     j: int | None = None,
     k_mult: int = 1,
     interleaved: bool = True,
-    compile_mode: CompileMode = "optimize",
     multithread_buckets: bool | None = False,
 ) -> tuple[Tensor, Tensor]:
     """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
@@ -56,10 +56,9 @@ def topk(
         use_thread_per_bucket = lots_of_buckets or small_buckets
         multithread_buckets = not use_thread_per_bucket
 
-    impl = load_cuda_extension("priority_queue.cu", compile_mode)
+    impl = load_cuda_extension("priority_queue.cu", compile_mode="optimize")
 
-    output_shape = list(xs.shape)
-    output_shape[dim] = k0
+    output_shape = _get_output_shape(xs, k0, dim)
     stage_1_values = torch.empty(output_shape, device=xs.device, dtype=xs.dtype)
     # FIXME: Output can be int32 or int64 depending on whether kernel decides if it can
     #        do 32 bit indexing.
@@ -86,3 +85,25 @@ def topk(
             stage_1_values, k, dim, largest, sorted=False
         )
         return stage_2_values, stage_1_indices.gather(dim, stage_2_indices)
+
+
+@topk.register_fake
+def _(
+    xs: Tensor,
+    k: int,
+    dim: int,
+    j: int | None = None,
+    k_mult: int = 1,
+    interleaved: bool = True,
+    multithread_buckets: bool | None = False,
+) -> tuple[Tensor, Tensor]:
+    output_shape = _get_output_shape(xs, k, dim)
+    values = torch.empty(output_shape, device=xs.device, dtype=xs.dtype)
+    indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
+    return values, indices
+
+
+def _get_output_shape(xs: Tensor, k: int, dim: int) -> list[int]:
+    output_shape = list(xs.shape)
+    output_shape[dim] = k
+    return output_shape

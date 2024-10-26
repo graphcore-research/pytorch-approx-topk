@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from torch import Generator
+from torch import Generator, Tensor
 
 from approx_topk.priority_queue import topk
 from approx_topk.torch_default import bucket_topk
@@ -237,7 +237,7 @@ def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact(
 @pytest.mark.parametrize("interleaved", [True, False])
 @pytest.mark.parametrize("k_per_bucket", [1, 2, 4])
 @pytest.mark.parametrize("multithread_buckets", [False, True])
-def test_against_reference_bucket_topk(
+def test__equal_to_reference_bucket_topk(
     interleaved: bool, k_per_bucket: int, multithread_buckets: bool
 ) -> None:
     torch.manual_seed(100)
@@ -260,6 +260,51 @@ def test_against_reference_bucket_topk(
     )
     assert_close_up_to_permutation(values, expected_values)
     assert_close_up_to_permutation(indices, expected_indices)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [None, False, True])
+def test__passes_op_check(
+    dtype, interleaved: bool, multithread_buckets: None | bool
+) -> None:
+    xs = torch.randn(32, 128, **rng_kwargs(0))
+    torch.library.opcheck(
+        topk,
+        args=(xs,),
+        kwargs=dict(
+            k=12,
+            dim=-1,
+            j=1,
+            interleaved=interleaved,
+            multithread_buckets=multithread_buckets,
+        ),
+    )
+
+
+compiled_topk = torch.compile(topk, fullgraph=True)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("interleaved", [False, True])
+@pytest.mark.parametrize("multithread_buckets", [None, False, True])
+def test__torch_compile__equal_to_uncompiled(
+    dtype, interleaved: bool, multithread_buckets: None | bool
+) -> None:
+    xs = torch.randn(32, 128, **rng_kwargs(0))
+    kwargs = dict(
+        xs=xs,
+        k=12,
+        dim=-1,
+        j=2,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
+    )
+    expected_values, expected_indices = topk(**kwargs)
+    compiled_values, compiled_indices = compiled_topk(**kwargs)
+
+    assert torch.allclose(expected_values, compiled_values)
+    assert torch.allclose(expected_indices, compiled_indices)
 
 
 def rng_kwargs(seed: int):
