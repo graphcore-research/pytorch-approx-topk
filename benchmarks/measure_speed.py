@@ -164,43 +164,63 @@ class RaftExperiment(Experiment):
             ),
             dtype=cp.float32,
         )
-        values = cp.empty(xs.shape[1:], dtype=cp.float32)
-        indices = cp.empty(xs.shape[1:], dtype=cp.int64)
+        values = cp.empty((self.n_inner, self.batch_size, self.k), dtype=cp.float32)
+        indices = cp.empty((self.n_inner, self.batch_size, self.k), dtype=cp.int64)
 
-        cupy_stream = cp.cuda.Stream()
-        raft_handle = Handle(cupy_stream.ptr)
+        def pre_fn(stream: cp.cuda.Stream):
+            with stream:
+                xs[:, :, :] = cp.random.standard_normal(xs.shape)
 
-        def pre_fn():
-            xs[:, :, :] = cp.random.standard_normal(xs.shape)
-
-        def fn():
+        def fn(stream: cp.cuda.Stream):
+            handle = Handle(stream.ptr)
             for i in range(self.n_inner):
+                j = i % xs.shape[0]
                 raft_select_k(
-                    xs[i % xs.shape[0]],
-                    self.k,
+                    xs[j],
                     select_min=False,
-                    distances=values,
-                    indices=indices,
-                    handle=raft_handle,
+                    distances=values[i],
+                    indices=indices[i],
+                    handle=handle,
                 )
 
-        if self.cuda_graphs:
-            cupy_stream.begin_capture()
-            fn()
-            graph = cupy_stream.end_capture()
-            fn = graph.launch
+        return benchmark_cupy(fn, self.n_outer, pre_fn, self.cuda_graphs, self.n_warmup)
 
-        for _ in range(self.n_outer if self.n_warmup is None else self.n_warmup):
-            fn()
 
-        events = [(cp.cuda.Event(), cp.cuda.Event()) for _ in range(self.n_outer)]
-        for start, end in events:
-            pre_fn()
-            start.record(stream=cupy_stream)
-            fn()
-            end.record(stream=cupy_stream)
-        cupy_stream.synchronize()
-        return [cp.cuda.get_elapsed_time(start, end) / 1e3 for start, end in events]
+def benchmark_cupy(
+    fn: Callable[[cp.cuda.Stream], Any],
+    steps: int,
+    pre_fn: Callable[[cp.cuda.Stream], Any] = lambda: None,
+    cuda_graphs: bool = True,
+    warmup_steps: Optional[int] = None,
+) -> list[float]:
+    main_stream = cp.cuda.get_current_stream()
+
+    if cuda_graphs:
+        main_stream.synchronize()
+        warmup_stream = cp.cuda.Stream()
+        pre_fn(warmup_stream)
+        fn(warmup_stream)
+        warmup_stream.synchronize()
+
+        capture_stream = cp.cuda.Stream()
+        pre_fn(capture_stream)
+        capture_stream.begin_capture()
+        fn(capture_stream)
+        graph = capture_stream.end_capture()
+        capture_stream.synchronize()
+        fn = graph.launch
+
+    for _ in range(warmup_steps):
+        fn(main_stream)
+
+    events = [(cp.cuda.Event(), cp.cuda.Event()) for _ in range(steps)]
+    for start, end in events:
+        pre_fn(main_stream)
+        start.record(stream=main_stream)
+        fn(main_stream)
+        end.record(stream=main_stream)
+    main_stream.synchronize()
+    return [cp.cuda.get_elapsed_time(start, end) / 1e3 for start, end in events]
 
 
 def sweep(configs: Iterable[Experiment], out: Path) -> None:
@@ -230,30 +250,44 @@ def fake_topk_sum(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
 
 
 if __name__ == "__main__":
-    experiments: list[Experiment] = []
     ns = [2**n for n in [16, 15, 14, 13, 12]]
     batch_sizes = [128, 32]
-    for n, batch_size in itertools.product(ns, batch_sizes):
+    cuda_graph_configs = [
+        dict(cuda_graphs=False, n_inner=1),
+        dict(cuda_graphs=True, n_inner=128),
+    ]
+
+    experiments: list[Experiment] = []
+    for n, batch_size, cuda_graph_config in itertools.product(
+        ns, batch_sizes, cuda_graph_configs
+    ):
         for k in [64, n // 8]:
-            experiments += [
-                RaftExperiment(
-                    cuda_graphs=True,
-                    batch_size=batch_size,
-                    topk_size=n,
-                    k=k,
-                    dtype=torch.float32,
-                )
-            ]
+            experiments += (
+                [
+                    RaftExperiment(
+                        batch_size=batch_size,
+                        topk_size=n,
+                        k=k,
+                        dtype=torch.float32,
+                        **cuda_graph_config,
+                    )
+                ]
+                if k == 64 or not cuda_graph_config["cuda_graphs"]
+                else []
+            )
             experiments += [
                 PyTorchExperiment(
                     method=method,
                     args=args,
-                    compile="default" if method is bucket_argmax.topk_torch else None,
-                    cuda_graphs=True,
+                    compile="default"
+                    if method is bucket_argmax.topk_torch
+                    or method is priority_queue.topk
+                    else None,
                     batch_size=batch_size,
                     topk_size=n,
                     k=k,
                     dtype=torch.float32,
+                    **cuda_graph_config,
                 )
                 for km in [1]
                 for mtb in [False, True]
