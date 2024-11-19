@@ -2,10 +2,11 @@
 
 """Run an experiment to measure runtime."""
 
+import dataclasses
 import itertools
 import json
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -45,9 +46,16 @@ class PyTorchExperiment(Experiment):
     compile: Optional[str]
 
     def save(self) -> dict[str, Any]:
-        d = asdict(self)
+        # Have to do this rather than use dataclasses.asdict() because
+        # priority_queue.topk is a CustomOpDef and can't be deepcopied, which is
+        # required for asdict() to work. Of course, now have to be careful not to mutate
+        # any of the values.
+        d = {k: v for k, v in self.__dict__.items()}
         method = d.pop("method")
-        d["method"] = f"{method.__module__}.{method.__name__}"
+        if method == priority_queue.topk:
+            d["method"] = "approx_topk.priority_queue.topk"
+        else:
+            d["method"] = f"{method.__module__}.{method.__name__}"
         d["dtype"] = str(d.pop("dtype")).replace("torch.", "")
         return d
 
@@ -140,7 +148,7 @@ class RaftExperiment(Experiment):
             raise ValueError("Raft only supports float32")
 
     def save(self) -> dict[str, Any]:
-        d = asdict(self)
+        d = dataclasses.asdict(self)
         d["method"] = "raft"
         d["dtype"] = str(d.pop("dtype")).replace("torch.", "")
         d["args"] = {}
