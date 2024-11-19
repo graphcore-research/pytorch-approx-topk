@@ -20,16 +20,16 @@ from torch import Tensor
 from approx_topk import Topk, bucket_argmax, priority_queue, torch_default
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Experiment(ABC):
     cuda_graphs: bool
     batch_size: int
     topk_size: int
     k: int
     dtype: torch.dtype
+    n_outer: int
+    n_inner: int
     n_warmup: int = 16
-    n_outer: int = 16
-    n_inner: int = 128
     n_inner_inputs: Optional[int] = None
 
     @abstractmethod
@@ -262,8 +262,8 @@ if __name__ == "__main__":
     ns = [2**n for n in [16, 15, 14, 13, 12]]
     batch_sizes = [128, 32]
     cuda_graph_configs = [
-        dict(cuda_graphs=False, n_inner=1),
-        dict(cuda_graphs=True, n_inner=128),
+        dict(cuda_graphs=False, n_outer=512, n_inner=1),
+        dict(cuda_graphs=True, n_outer=16, n_inner=128),
     ]
 
     experiments: list[Experiment] = []
