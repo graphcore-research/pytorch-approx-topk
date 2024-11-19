@@ -281,7 +281,10 @@ if __name__ == "__main__":
                         **cuda_graph_config,
                     )
                 ]
-                if k == 64 or not cuda_graph_config["cuda_graphs"]
+                # Do not run RAFT with cuda graphs enabled if k > 256. For k > 256 it
+                # uses the radix select kernel which does not support cuda graphs.
+                # For k <=256 it uses the warp select kernel which does work.
+                if k <= 256 or not cuda_graph_config["cuda_graphs"]
                 else []
             )
             experiments += [
