@@ -173,7 +173,7 @@ class RaftExperiment(Experiment):
                 xs[:, :, :] = cp.random.standard_normal(xs.shape)
 
         def fn(stream: cp.cuda.Stream):
-            handle = Handle(stream.ptr)
+            handle = Handle(stream=stream.ptr)
             for i in range(self.n_inner):
                 j = i % xs.shape[0]
                 raft_select_k(
@@ -194,7 +194,10 @@ def benchmark_cupy(
     cuda_graphs: bool = True,
     warmup_steps: Optional[int] = None,
 ) -> list[float]:
-    main_stream = cp.cuda.get_current_stream()
+    main_stream = cp.cuda.Stream(non_blocking=True)
+    # We need to set the pytorch stream so _sleep() below uses the correct stream.
+    prev_torch_stream = torch.cuda.current_stream()
+    torch.cuda.set_stream(torch.cuda.ExternalStream(main_stream.ptr))
 
     if cuda_graphs:
         main_stream.synchronize()
@@ -222,7 +225,11 @@ def benchmark_cupy(
         fn(main_stream)
         end.record(stream=main_stream)
     main_stream.synchronize()
-    return [cp.cuda.get_elapsed_time(start, end) / 1e3 for start, end in events]
+    times = [cp.cuda.get_elapsed_time(start, end) / 1e3 for start, end in events]
+
+    torch.cuda.set_stream(prev_torch_stream)
+
+    return times
 
 
 def sweep(configs: Iterable[Experiment], out: Path) -> None:
