@@ -134,6 +134,7 @@ def benchmark_pytorch(
     ]
     for start, end in events:
         pre_fn()
+        torch.cuda._sleep(10_000_000)
         start.record()
         fn()
         end.record()
@@ -216,6 +217,7 @@ def benchmark_cupy(
     events = [(cp.cuda.Event(), cp.cuda.Event()) for _ in range(steps)]
     for start, end in events:
         pre_fn(main_stream)
+        torch.cuda._sleep(10_000_000)
         start.record(stream=main_stream)
         fn(main_stream)
         end.record(stream=main_stream)
