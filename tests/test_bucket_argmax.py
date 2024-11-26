@@ -7,7 +7,7 @@ import pytest
 import torch
 import triton
 
-from approx_topk.experimental.bucket_argmax import (
+from approx_topk.experimental.bucketed_argmax import (
     _batch_contiguous,
     topk_torch,
     topk_triton,
@@ -48,7 +48,7 @@ def test_batch_contiguous():
         partial(topk_triton, block_size=8, kernel="bkn"),
     ],
 )
-def test_bucket_argmax(topk):
+def test_bucketed_argmax(topk):
     inputs = torch.stack([100 * torch.arange(0, 20), -100 * torch.arange(0, 20)]).to(
         dtype=torch.float32, device="cuda"
     )
@@ -74,7 +74,7 @@ def test_bucket_argmax(topk):
 
 
 @pytest.mark.parametrize("kernel", ["bk", "bkn"])
-def test_bucket_argmax_triton_fuzz(kernel: str):
+def test_bucketed_argmax_triton_fuzz(kernel: str):
     for seed in np.random.SeedSequence(123).generate_state(20):
         rng = np.random.RandomState(seed)
         torch.manual_seed(rng.randint(100000))
