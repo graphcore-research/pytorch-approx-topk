@@ -253,9 +253,8 @@ def sweep(configs: Iterable[Experiment], out: Path) -> None:
             )
 
 
-def fake_topk_sum(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
-    y = xs.sum(dim=dim, keepdim=True)  # ignore k, just run a sum
-    return y, torch.zeros(y.shape, dtype=torch.long, device=y.device)
+def torch_topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
+    return torch.topk(xs, k, dim, sorted=False)
 
 
 if __name__ == "__main__":
@@ -304,7 +303,7 @@ if __name__ == "__main__":
                 for km in [1]
                 for mtb in [False, True]
                 for method, args in [
-                    (torch_default.topk, {}),
+                    (torch_topk, {}),
                     (
                         priority_queue.topk,
                         dict(j=1, k_mult=km, multithread_buckets=mtb),

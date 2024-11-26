@@ -74,3 +74,22 @@ def bucket(
         return val, idx0.flatten(-2).gather(-1, idx1)
 
     return bucketed
+
+
+def bucketed_torch_topk(
+    xs: Tensor,
+    k: int,
+    dim: int,
+    k_mult: int,
+    k_per_bucket: int,
+    interleaved: bool,
+) -> tuple[Tensor, Tensor]:
+    def topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
+        return torch.topk(xs, k, dim, sorted=False)
+
+    return bucket(
+        topk,
+        k_mult=k_mult,
+        k_per_bucket=k_per_bucket,
+        interleaved=interleaved,
+    )(xs, k, dim)

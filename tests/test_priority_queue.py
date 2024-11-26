@@ -4,8 +4,8 @@ import pytest
 import torch
 from torch import Generator, Tensor
 
+from approx_topk.autobucket import bucketed_torch_topk
 from approx_topk.priority_queue import topk
-from approx_topk.torch_default import bucket_topk
 from tests.helper_funcs import assert_close_up_to_permutation
 
 
@@ -237,7 +237,7 @@ def test__bucketed__interleaved__topk_ideally_distributed__equal_to_exact(
 @pytest.mark.parametrize("interleaved", [True, False])
 @pytest.mark.parametrize("k_per_bucket", [1, 2, 4])
 @pytest.mark.parametrize("multithread_buckets", [False, True])
-def test__equal_to_reference_bucket_topk(
+def test__equal_to_reference_bucketed_torch_topk(
     interleaved: bool, k_per_bucket: int, multithread_buckets: bool
 ) -> None:
     torch.manual_seed(100)
@@ -250,7 +250,7 @@ def test__equal_to_reference_bucket_topk(
         interleaved=interleaved,
         multithread_buckets=multithread_buckets,
     )
-    expected_values, expected_indices = bucket_topk(
+    expected_values, expected_indices = bucketed_torch_topk(
         xs,
         k=64,
         dim=-1,

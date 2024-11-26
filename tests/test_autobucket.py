@@ -2,16 +2,18 @@
 
 import pytest
 import torch
+from torch import Tensor
 
-from approx_topk import torch_default
 from approx_topk.autobucket import bucket
 from tests.helper_funcs import assert_close_up_to_permutation
 
 
+def topk(xs: Tensor, k: int, dim: int) -> tuple[Tensor, Tensor]:
+    return torch.topk(xs, k, dim, sorted=False)
+
+
 def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:
-    bucketed_topk = bucket(
-        torch_default.topk, k_mult=1, k_per_bucket=12, interleaved=True
-    )
+    bucketed_topk = bucket(topk, k_mult=1, k_per_bucket=12, interleaved=True)
     xs = torch.randn(1024)
     with pytest.raises(NotImplementedError):
         bucketed_topk(xs, 13, dim=0)
@@ -19,9 +21,7 @@ def test__bucket__k_not_divisible_by_k_per_bucket__raises() -> None:
 
 # NOTE: Only works for interleaved=False
 def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> None:
-    bucketed_topk = bucket(
-        torch_default.topk, k_mult=1, k_per_bucket=2, interleaved=False
-    )
+    bucketed_topk = bucket(topk, k_mult=1, k_per_bucket=2, interleaved=False)
     k = 8
     # Make sure input size is not divisible by number of buckets (in this case 4) to
     # test padding code.
@@ -45,7 +45,7 @@ def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> No
     xs[1, 921] = 12.0
 
     values, indices = bucketed_topk(xs, k, dim=1)
-    expected_values, expected_indices = torch_default.topk(xs, k, dim=1)
+    expected_values, expected_indices = topk(xs, k, dim=1)
 
     assert_close_up_to_permutation(values, expected_values, dim=1)
     assert_close_up_to_permutation(indices, expected_indices, dim=1)
@@ -54,13 +54,11 @@ def test__bucket__top_k_values_ideally_distributed__equal_to_exact_top_k() -> No
 @pytest.mark.parametrize("interleaved", [True, False])
 def test__bucket__only_one_bucket__equal_to_exact_top_k(interleaved) -> None:
     k = 128
-    bucketed_topk = bucket(
-        torch_default.topk, k_mult=1, k_per_bucket=k, interleaved=interleaved
-    )
+    bucketed_topk = bucket(topk, k_mult=1, k_per_bucket=k, interleaved=interleaved)
     xs = torch.randn(1024)
 
     values, indices = bucketed_topk(xs, k, dim=0)
-    expected_values, expected_indices = torch_default.topk(xs, k, dim=0)
+    expected_values, expected_indices = topk(xs, k, dim=0)
 
     assert_close_up_to_permutation(values, expected_values)
     assert_close_up_to_permutation(indices, expected_indices)
@@ -73,7 +71,7 @@ def test__bucket__one_k_per_bucket__does_not_crash(
     interleaved, k_mult, k_per_bucket
 ) -> None:
     bucketed_topk = bucket(
-        torch_default.topk,
+        topk,
         k_mult=k_mult,
         k_per_bucket=k_per_bucket,
         interleaved=interleaved,
