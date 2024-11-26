@@ -95,7 +95,9 @@ def _topk_triton_kernel__parallel_bk(
     max_i = tl.zeros((BLOCK_SIZE,), tl.int64)
     for i in tl.range(1, n_chunk):
         mask = (b_idx < b) & (k_idx * k_stride + i * i_stride < n)
-        block = tl.load(xs_ptr + k_idx * k_stride + i * i_stride, mask=mask, other=PAD_VALUE)
+        block = tl.load(
+            xs_ptr + k_idx * k_stride + i * i_stride, mask=mask, other=PAD_VALUE
+        )
         mask &= max_value < block
         max_value = tl.where(mask, block, max_value)
         max_i = tl.where(mask, i, max_i)

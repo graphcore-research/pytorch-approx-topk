@@ -17,7 +17,8 @@ from pylibraft.common import Handle
 from pylibraft.matrix import select_k as raft_select_k
 from torch import Tensor
 
-from approx_topk import Topk, bucket_argmax, priority_queue, torch_default
+from approx_topk import Topk, priority_queue
+from approx_topk.experimental import bucket_argmax
 
 
 @dataclass(frozen=True, kw_only=True)

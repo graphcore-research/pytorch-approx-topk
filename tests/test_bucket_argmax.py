@@ -2,11 +2,16 @@
 
 from functools import partial
 
+import numpy as np
 import pytest
 import torch
-import numpy as np
 import triton
-from approx_topk.bucket_argmax import topk_torch, topk_triton, _batch_contiguous
+
+from approx_topk.experimental.bucket_argmax import (
+    _batch_contiguous,
+    topk_torch,
+    topk_triton,
+)
 
 
 def test_batch_contiguous():

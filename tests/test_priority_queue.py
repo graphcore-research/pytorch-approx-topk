@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import Generator, Tensor
 
-from approx_topk.autobucket import bucketed_torch_topk
+from approx_topk.experimental.autobucket import bucketed_torch_topk
 from approx_topk.priority_queue import topk
 from tests.helper_funcs import assert_close_up_to_permutation
 
