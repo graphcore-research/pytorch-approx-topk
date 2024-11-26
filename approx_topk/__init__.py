@@ -4,6 +4,8 @@ from typing import Protocol
 
 from torch import Tensor
 
+from .priority_queue import topk as topk
+
 
 class Topk(Protocol):
     @staticmethod
