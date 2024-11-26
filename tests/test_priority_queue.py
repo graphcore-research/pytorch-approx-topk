@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from torch import Generator, Tensor
+from torch import Generator
 
 from approx_topk.experimental.autobucket import bucketed_torch_topk
 from approx_topk.priority_queue import topk

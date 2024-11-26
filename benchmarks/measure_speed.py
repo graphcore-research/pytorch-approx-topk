@@ -319,7 +319,7 @@ if __name__ == "__main__":
                     ),
                     (bucket_argmax.topk_torch, dict(interleaved=True)),
                 ]
-                if method is priority_queue.topk or (km == 1 and mtb == False)
+                if method is priority_queue.topk or (km == 1 and not mtb)
                 if k * km < n
             ]
 

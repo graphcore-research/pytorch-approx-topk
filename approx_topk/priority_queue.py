@@ -5,7 +5,7 @@ import math
 import torch
 from torch import Tensor
 
-from approx_topk.cuda_extensions import CompileMode, load_cuda_extension
+from approx_topk.cuda_extensions import load_cuda_extension
 
 
 @torch.library.custom_op("approx_topk::topk", mutates_args=())
