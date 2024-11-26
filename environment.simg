@@ -1,0 +1,21 @@
+# Build the image: apptainer build environment.sif environment.simg
+# Run the image: apptainer exec --nv environment.sif python benchmarks/measure_speed.py
+
+Bootstrap: docker
+From: pytorch/pytorch:2.5.0-cuda12.4-cudnn9-devel
+
+%files
+    pyproject.toml /environment-config/pyproject.toml
+    poetry.lock /environment-config/poetry.lock
+
+%post
+    pip install poetry==1.8
+    poetry export --directory /environment-config --with benchmarks --with dev --without-hashes > /environment-config/requirements.txt
+    pip install -r /environment-config/requirements.txt
+
+%environment
+    export CUDA_HOME=/usr/local/cuda
+
+%runscript
+    pip install -e .
+    exec "$@"
