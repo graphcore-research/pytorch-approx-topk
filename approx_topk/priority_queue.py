@@ -63,7 +63,7 @@ def topk(
     stage_1_indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
-    impl.priority_queue_topk(
+    impl.PriorityQueueTopK(
         xs,
         k0,
         j,
