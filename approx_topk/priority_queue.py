@@ -57,9 +57,6 @@ def topk(
 
     output_shape = _get_output_shape(xs, k0, dim)
     stage_1_values = torch.empty(output_shape, device=xs.device, dtype=xs.dtype)
-    # FIXME: Output can be int32 or int64 depending on whether kernel decides if it can
-    #        do 32 bit indexing.
-    # Oscar: Unsure how to deal with this properly yet.
     stage_1_indices = torch.empty(output_shape, dtype=torch.int64, device=xs.device)
 
     largest = True
