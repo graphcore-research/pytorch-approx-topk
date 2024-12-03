@@ -264,6 +264,7 @@ __global__ void blockTopk(
   correctIndices<IndexType, J>(
       largestIndices, inputStartIndex, inputIndexStride);
 
+  __syncthreads();
   using BlockMergeSort = cub::BlockMergeSort<T, NumThreads, J, IndexType>;
   __shared__ typename BlockMergeSort::TempStorage temp_storage_shuffle;
   BlockMergeSort(temp_storage_shuffle)
