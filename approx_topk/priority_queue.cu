@@ -286,6 +286,21 @@ __global__ void blockTopk(
       indicesWithinSliceStride);
 }
 
+template <typename IndexType>
+bool shouldUseMultithreadBuckets(
+    IndexType numInputSlices,
+    IndexType inputSliceSize,
+    IndexType bucketsPerSlice) {
+  IndexType total_buckets = numInputSlices * bucketsPerSlice;
+  IndexType bucket_size = inputSliceSize / bucketsPerSlice;
+  // TODO: Get actual values for GPU in use.
+  int n_sms = 120;
+  int threads_per_warp = 32;
+  bool lots_of_buckets = total_buckets >= n_sms * threads_per_warp;
+  bool small_buckets = bucket_size < 64;
+  return !(lots_of_buckets || small_buckets);
+}
+
 template <typename T, typename IndexType, int Dim, int J>
 void launchKernel(
     at::cuda::detail::TensorInfo<const T, IndexType> input,
@@ -293,7 +308,7 @@ void launchKernel(
     IndexType k,
     bool largest,
     bool interleaved,
-    bool multithreadBuckets,
+    c10::optional<bool> multithread_buckets,
 
     IndexType numInputSlices,
     IndexType inputWithinSliceStride,
@@ -312,7 +327,10 @@ void launchKernel(
   TORCH_CHECK(k <= inputSliceSize, "topk: k must not be larger than topk size");
   IndexType numBuckets = k / J;
 
-  if (multithreadBuckets) {
+  bool should_use_multithread_buckets =
+      multithread_buckets.value_or(shouldUseMultithreadBuckets<IndexType>(
+          numInputSlices, inputSliceSize, numBuckets));
+  if (should_use_multithread_buckets) {
     TORCH_CHECK(numBuckets <= kMaxGridSize[0], "topk: too many buckets")
     dim3 grid(numBuckets, numInputSlices, 1);
     const uint kNumThreads = 64;
@@ -361,7 +379,7 @@ void priority_queue_topk(
     int64_t dim,
     bool largest,
     bool interleaved,
-    bool multithread_buckets,
+    c10::optional<bool> multithread_buckets,
     const Tensor& values,
     const Tensor& indices) {
   TensorArg input_arg{self, "xs", 1}, topK_arg{values, "valuesOutput", 2},

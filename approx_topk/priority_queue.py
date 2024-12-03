@@ -24,8 +24,8 @@ def topk(
               for each bucket.
     :param multithread_buckets: If True, use a warp of threads to process each bucket.
                                 If False, use a single thread for each bucket.
-                                If None, decide using heuristics based on the bucket
-                                size.
+                                If None, decide using a heuristic
+                                (see shouldUseMultithreadBuckets in the kernel)
     """
     if dim < 0:
         dim = xs.ndim + dim
@@ -40,21 +40,6 @@ def topk(
         k0 = k * k_mult
     else:
         raise ValueError(f"k_mult must be >=1, was {k_mult}")
-
-    if multithread_buckets is None:
-        n_slices = math.prod(1 if i == dim else d for i, d in enumerate(xs.shape))
-        buckets_per_slice = k0 // j
-        total_buckets = n_slices * buckets_per_slice
-        bucket_size = xs.shape[dim] // buckets_per_slice
-        # As a heuristic, we want to use the thread-per-bucket kernel if we have enough
-        # buckets to saturate the GPU, or if the buckets are quite small.
-        # FIXME: Should do this in C++ so we can use the stats of the actual GPU.
-        n_sms = 120
-        threads_per_warp = 32
-        lots_of_buckets = total_buckets >= n_sms * threads_per_warp
-        small_buckets = bucket_size < 64
-        use_thread_per_bucket = lots_of_buckets or small_buckets
-        multithread_buckets = not use_thread_per_bucket
 
     impl = load_cuda_extension("priority_queue.cu", compile_mode="optimize")
 
