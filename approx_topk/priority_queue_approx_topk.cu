@@ -331,7 +331,7 @@ void LaunchKernel(
   IndexType num_buckets = k / J;
 
   bool should_use_multithread_buckets =
-      multithread_buckets.value_or(ShouldUseMultithreadBuckets<IndexType>(
+      multithread_buckets.value_or(ShouldUseMultithreadBuckets(
           num_input_slices, input_slice_size, num_buckets));
   if (should_use_multithread_buckets) {
     TORCH_CHECK(num_buckets <= kMaxGridSize[0], "topk: too many buckets")
