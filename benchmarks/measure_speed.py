@@ -1,6 +1,6 @@
 # Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
 
-"""Run an experiment to measure runtime."""
+"""Measure the runtime of various exact and approximate top-$k$ implementations."""
 
 import dataclasses
 import itertools
@@ -18,7 +18,7 @@ from pylibraft.matrix import select_k as raft_select_k
 from torch import Tensor
 
 from approx_topk import Topk, priority_queue
-from approx_topk.experimental import bucket_argmax
+from approx_topk.experimental import bucketed_argmax
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -292,7 +292,7 @@ if __name__ == "__main__":
                     method=method,
                     args=args,
                     compile="default"
-                    if method is bucket_argmax.topk_torch
+                    if method is bucketed_argmax.topk_torch
                     or method is priority_queue.topk
                     else None,
                     batch_size=batch_size,
@@ -317,7 +317,7 @@ if __name__ == "__main__":
                         priority_queue.topk,
                         dict(j=4, k_mult=km, multithread_buckets=mtb),
                     ),
-                    (bucket_argmax.topk_torch, dict(interleaved=True)),
+                    (bucketed_argmax.topk_torch, dict(interleaved=True)),
                 ]
                 if method is priority_queue.topk or (km == 1 and not mtb)
                 if k * km < n
