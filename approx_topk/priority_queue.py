@@ -1,6 +1,9 @@
 # Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
 
-import math
+"""Python interface for the priority queue approx top-k CUDA kernel.
+
+The kernel is defined in priority_queue_approx_topk.cu.
+"""
 
 import torch
 from torch import Tensor
@@ -53,7 +56,7 @@ def topk(
     else:
         raise ValueError(f"k_mult must be >=1, was {k_mult}")
 
-    impl = load_cuda_extension("priority_queue.cu", compile_mode="optimize")
+    impl = load_cuda_extension("priority_queue_approx_topk.cu", compile_mode="optimize")
 
     output_shape = _get_output_shape(xs, k0, dim)
     stage_1_values = torch.empty(output_shape, device=xs.device, dtype=xs.dtype)

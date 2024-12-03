@@ -20,7 +20,7 @@ def load_cuda_extension(file_name: str, compile_mode: CompileMode):
     nvcc_flags += ["--generate-line-info"]
 
     return cpp_extension.load(
-        name=file_name.removesuffix(".cu") + "_topk",
+        name=file_name.removesuffix(".cu"),
         # TODO: Work out how to package the C code properly.
         sources=[str(Path(__file__).parent / file_name)],
         extra_cuda_cflags=nvcc_flags,

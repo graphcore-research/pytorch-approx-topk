@@ -1,6 +1,5 @@
 // Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
 
-// #define TORCH_ASSERT_NO_OPERATORS
 #include <ATen/Dispatch.h>
 #include <ATen/core/TensorBase.h>
 #include <ATen/cuda/CUDAContext.h>
