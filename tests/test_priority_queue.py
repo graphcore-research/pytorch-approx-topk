@@ -18,7 +18,12 @@ def test__one_bucket__no_batch__equal_to_built_in(
 ) -> None:
     xs = torch.randn(1001, dtype=dtype, **rng_kwargs(234))
     values, indices = topk(
-        xs, k, dim=0, interleaved=interleaved, multithread_buckets=multithread_buckets
+        xs,
+        k,
+        j=k,
+        dim=0,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
     )
 
     expected_values, expected_indices = torch.topk(xs, k, dim=0)
@@ -37,7 +42,12 @@ def test__one_bucket__batched__equal_to_built_in(
 ) -> None:
     xs = torch.rand((30, 25, 16), dtype=dtype, **rng_kwargs(4242))
     values, indices = topk(
-        xs, k, dim, interleaved=interleaved, multithread_buckets=multithread_buckets
+        xs,
+        k,
+        j=k,
+        dim=dim,
+        interleaved=interleaved,
+        multithread_buckets=multithread_buckets,
     )
 
     expected_values, expected_indices = torch.topk(xs, k, dim)
@@ -49,7 +59,7 @@ def test__one_bucket__batched__equal_to_built_in(
 @pytest.mark.parametrize("dim", [-1, -2])
 def test__negative_dim__does_not_crash(dim: int) -> None:
     xs = torch.randn((128, 256), **rng_kwargs(99))
-    topk(xs, k=4, dim=dim)
+    topk(xs, k=4, j=4, dim=dim)
 
 
 def test__call_twice_on_same_data__does_not_crash() -> None:

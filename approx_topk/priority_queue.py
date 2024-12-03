@@ -13,15 +13,29 @@ def topk(
     xs: Tensor,
     k: int,
     dim: int,
-    j: int | None = None,
+    j: int = 1,
     k_mult: int = 1,
     interleaved: bool = True,
     multithread_buckets: bool | None = False,
 ) -> tuple[Tensor, Tensor]:
-    """Computes a top-k. This is exact if j is None (default), or otherwise approximate.
+    """Computes an approximate top-k.
 
-    :param j: if not None, xs is split into k/j buckets, and then the top-j is computed
-              for each bucket.
+    The algorithm is as follows:
+        - Split the input into b = k_mult * k/j buckets
+          (either be contiguous or interleaved, see the `interleaved` parameter)
+        - Take the top j values per bucket
+        - If b*j>k: take a second top-k of the results
+
+    :param j: number of items to take per bucket.
+        The implementation currently requires j in {1,2,4}, and k mod j = 0.
+
+    :param k_mult: controls the number of buckets that the input is split into.
+        You might want to increase the number of buckets in order to to
+        (a) increase the recall, or
+        (b) increase the amount of parallelism, if k/j is small.
+        However, if k_mult > 1 then a second top-k stage is required, which
+        can slow things down for larger k.
+
     :param multithread_buckets: If True, use a warp of threads to process each bucket.
                                 If False, use a single thread for each bucket.
                                 If None, decide using a heuristic
@@ -29,10 +43,8 @@ def topk(
     """
     if dim < 0:
         dim = xs.ndim + dim
-    if j is None:
-        j = k
     if j < k and dim != xs.ndim - 1:
-        raise NotImplementedError("Heap topk only currently works on the last dim")
+        raise NotImplementedError("This topk only currently works on the last dim")
 
     if k_mult == 1:
         k0 = k
