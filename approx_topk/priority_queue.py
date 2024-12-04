@@ -41,8 +41,12 @@ def topk(
 
     :param multithread_buckets: If True, use a warp of threads to process each bucket.
                                 If False, use a single thread for each bucket.
-                                If None, decide using a heuristic
-                                (see shouldUseMultithreadBuckets in the kernel)
+                                If None (default), decide using a heuristic
+                                (see shouldUseMultithreadBuckets in the kernel).
+
+                                This parameter is very important for performance, and
+                                currently the heuristic is not very good, so we suggest
+                                trying both options!
     """
     if dim < 0:
         dim = xs.ndim + dim
