@@ -1,6 +1,9 @@
 # Copyright (c) 2024 Graphcore Ltd and Oscar Key. All rights reserved.
 
-"""Measure the runtime of various exact and approximate top-$k$ implementations."""
+"""Measure the runtime of various exact and approximate top-$k$ implementations.
+
+Plot the results using plot_bandwidth.py.
+"""
 
 import dataclasses
 import itertools
