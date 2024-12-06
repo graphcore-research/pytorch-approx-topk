@@ -1,4 +1,4 @@
-# PyTorch Approx Top-$k$
+# PyTorch Approx Top-k
 
 Approximate algorithms for computing top-k faster on machine learning accelerators, by using bucketing to increase parallelism.
 Rather than computing a single top-k over the sequence:
@@ -13,6 +13,9 @@ _[
   Approximate Top-k for Increased Parallelism;
   O Key, L Ribar, A Cattaneo, L Hudlass-Galley, D Orr
 ](https://oscarkey.github.io/approx-topk.html)_
+
+The implementation is quite fast, but we welcome any contributions from CUDA experts.
+In Figure 1, we compare against `torch.argmax()`, which is a reasonable upper-bound on how fast this kernel could be. There's still room for improvement!
 
 ## Using the library
 Requires: Python >3.10, PyTorch >=2.4, Ninja (`ninja-build`), CUDA toolkit matching your version of PyTorch
