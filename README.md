@@ -12,7 +12,7 @@ See our paper for detailed benchmarks and analysis of the cost/quality trade-off
 _[
   Approximate Top-k for Increased Parallelism;
   O Key, L Ribar, A Cattaneo, L Hudlass-Galley, D Orr
-](https://oscarkey.github.io/approx-topk.html)_
+](https://arxiv.org/abs/2412.04358)_
 
 The implementation is quite fast, but we welcome any contributions from CUDA experts.
 In Figure 1, we compare against `torch.argmax()`, which is a reasonable upper-bound on how fast this kernel could be. There's still room for improvement!
